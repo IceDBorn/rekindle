@@ -1,4 +1,4 @@
-// Rekindle snapshots: takes a host-side snapshot of each run every few seconds to p2p_snapshot_run_<mgid>.bin,
+// Rekindle snapshots: takes a host-side snapshot of each run every few seconds to rekindle_run_<mgid>.bin,
 // and after a restore puts back ground items, runes, the player number, graces and the day clock.
 #include <windows.h>
 #include <stdarg.h>
@@ -119,10 +119,10 @@ static HANDLE snap_file = INVALID_HANDLE_VALUE;
 static char dll_dir[MAX_PATH];
 static int dll_dir_len;
 static __thread bool in_snapshot;
-// Auto snapshots go to a temp file and are renamed to p2p_snapshot_run_<multi_game_id>.bin when complete.
+// Auto snapshots go to a temp file and are renamed to rekindle_run_<multi_game_id>.bin when complete.
 // Snapshot timing and restore switches, read from rekindle.ini once the DLL folder is known.
 static uint64_t first_snapshot_ms = 10000, snapshot_every_ms = 30000, resume_snapshots_ms = 60000;
-static bool restore_items = true, restore_runes = true, boss_drops = true, graces = true;
+static bool restore_items = true, restore_runes = true, boss_drops = true, graces = true, enemy_hp = true;
 static uint64_t snap_mgid, last_auto_ms, done_mgid;
 // Set while rekindle.dll's run marker names a run that has no finished snapshot yet.
 static volatile LONG run_request;
@@ -375,7 +375,7 @@ static uint64_t first_tick_ms;
 static void read_restore_clock(void)
 {
     char rc_path[MAX_PATH];
-    snprintf(rc_path, MAX_PATH, "%.*srestore_clock.txt", dll_dir_len, dll_dir);
+    snprintf(rc_path, MAX_PATH, "%.*srekindle_clock.txt", dll_dir_len, dll_dir);
     FILE *rc = fopen(rc_path, "r");
     if (rc) {
         unsigned long long m = 0, c = 0;
@@ -387,17 +387,14 @@ static void read_restore_clock(void)
 
 static void apply_restore_clock(void)
 {
+    // The join answer (kind 8) already set the snapshot clock; writing it again here would rewind the storm.
     uint8_t *w = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + WORLD_AREA_TIME_RVA);
-    if (w) {
-        uint64_t was = *(uint64_t *)(w + 0x100);
-        *(uint64_t *)(w + 0x100) = restore_clock;
-        *(uint64_t *)(w + 0x110) = restore_clock;
-        log_line(LOG_INFO, "restore-clock mgid=%llu was=%llx now=%llx", (unsigned long long)restore_mgid,
-                 (unsigned long long)was, (unsigned long long)restore_clock);
-    }
+    if (w)
+        log_line(LOG_INFO, "restore-clock mgid=%llu snapshot=%llx now=%llx day=%d", (unsigned long long)restore_mgid,
+                 (unsigned long long)restore_clock, (unsigned long long)*(uint64_t *)(w + 0x100), w[0x156]);
     restore_mgid = 0;
     char path[MAX_PATH];
-    snprintf(path, MAX_PATH, "%.*srestore_clock.txt", dll_dir_len, dll_dir);
+    snprintf(path, MAX_PATH, "%.*srekindle_clock.txt", dll_dir_len, dll_dir);
     DeleteFileA(path);
 }
 
@@ -569,12 +566,88 @@ static void restore_player(uint8_t *base, const int32_t v[3])
         *runes += v[2] - *gained, *gained = v[2];
 }
 
+// WorldPlayAreaManager keeps the day 1 and day 2 circle sets; a join loads day 1, so a day 2 run needs
+// FUN_140691470(mgr, 1), which wants +0x2d set and [0x143c123f8] present.
+typedef void (*LoadDay_t)(void *mgr, uint8_t day);
+static void restore_day(uint8_t *base, int day)
+{
+    uint8_t *w = *(uint8_t **)(base + WORLD_AREA_TIME_RVA);
+    if (!w || day != 1 || w[0x156] == 1)
+        return;
+    bool ok = w[0x2d] && *(void **)(base + 0x3c123f8);
+    if (ok)
+        ((LoadDay_t)(base + 0x691470))(w, 1);
+    log_line(ok ? LOG_INFO : LOG_WARN, "restore-day 2 loaded=%d", ok);
+}
+
+// Damaged enemies: WorldChrMan +0x17b98 is a vector of every loaded ChrIns. Each record names the chr by its
+// field handle (+8) and NpcParam id (+0x68); HP is ChrDataModule ([[chr+0x1b8]]) +0x140, max +0x144.
+#define SNAP_ENEMIES 0xf4
+#define ENEMY_VT 0x2c18120
+#pragma pack(push, 1)
+struct enemy_hp { uint64_t handle; int32_t npc, hp, max; };
+#pragma pack(pop)
+static struct enemy_hp pending_hp[512];
+static int pending_hp_count;
+static uint64_t pending_hp_until;
+
+static int32_t *enemy_hp_of(uint8_t *chr)
+{
+    uint8_t **bag = *(uint8_t ***)(chr + 0x1b8);
+    return bag && *bag ? (int32_t *)(*bag + 0x140) : NULL;
+}
+
+static void take_enemies(uint8_t *base)
+{
+    uint8_t *wcm = *(uint8_t **)(base + 0x3c0f0a8);
+    if (!wcm)
+        return;
+    static struct enemy_hp out[512];
+    int n = 0;
+    for (uint8_t **c = *(uint8_t ***)(wcm + 0x17b98), **end = *(uint8_t ***)(wcm + 0x17ba0); c && c < end && n < 512; c++) {
+        int32_t *hp = *c && *(uintptr_t *)*c == (uintptr_t)(base + ENEMY_VT) ? enemy_hp_of(*c) : NULL;
+        if (hp && hp[0] > 0 && hp[0] < hp[1])
+            out[n++] = (struct enemy_hp){*(uint64_t *)(*c + 8), *(int32_t *)(*c + 0x68), hp[0], hp[1]};
+    }
+    if (n)
+        snap_write(SNAP_ENEMIES, (uint8_t *)out, n * (int)sizeof *out);
+    log_line(LOG_INFO, "enemies damaged=%d", n);
+}
+
+// Enemies load with their map block after the restore, so matching runs every tick for a few minutes.
+static void restore_enemies(uint8_t *base, uint64_t now)
+{
+    uint8_t *wcm = *(uint8_t **)(base + 0x3c0f0a8);
+    if (!pending_hp_count || !wcm)
+        return;
+    for (uint8_t **c = *(uint8_t ***)(wcm + 0x17b98), **end = *(uint8_t ***)(wcm + 0x17ba0); c && c < end; c++) {
+        if (!*c || *(uintptr_t *)*c != (uintptr_t)(base + ENEMY_VT))
+            continue;
+        uint64_t h = *(uint64_t *)(*c + 8);
+        for (int i = 0; i < pending_hp_count; i++) {
+            struct enemy_hp *e = &pending_hp[i];
+            int32_t *hp = e->handle == h && e->npc == *(int32_t *)(*c + 0x68) ? enemy_hp_of(*c) : NULL;
+            if (!hp || hp[1] != e->max || hp[0] <= 0)
+                continue;
+            log_line(LOG_INFO, "enemy-restore handle=%016llx npc=%d hp=%d->%d/%d", (unsigned long long)h, e->npc,
+                     hp[0], e->hp < hp[0] ? e->hp : hp[0], hp[1]);
+            if (e->hp < hp[0])
+                hp[0] = e->hp;
+            pending_hp[i--] = pending_hp[--pending_hp_count];
+        }
+    }
+    if (pending_hp_count && now > pending_hp_until) {
+        log_line(LOG_WARN, "enemy-restore gave up on %d enemies", pending_hp_count);
+        pending_hp_count = 0;
+    }
+}
+
 // Puts the crashed run's ground items back from its snapshot, skipping ids already in the world.
 static void restore_map_items(uint64_t mgid)
 {
     uint8_t *base = (uint8_t *)GetModuleHandleA(NULL), *man = *(uint8_t **)(base + MAP_ITEM_MAN_RVA);
     char path[MAX_PATH];
-    snprintf(path, MAX_PATH, "%.*sp2p_snapshot_run_%llu.bin", dll_dir_len, dll_dir, (unsigned long long)mgid);
+    snprintf(path, MAX_PATH, "%.*srekindle_run_%llu.bin", dll_dir_len, dll_dir, (unsigned long long)mgid);
     FILE *f = man ? fopen(path, "rb") : NULL;
     if (!f) {
         log_line(man ? LOG_ERROR : LOG_WARN, "map-items-restore mgid=%llu: %s", (unsigned long long)mgid,
@@ -587,6 +660,7 @@ static void restore_map_items(uint64_t mgid)
     fseek(f, 0, SEEK_SET);
     n = s ? (long)fread(s, 1, n, f) : 0;
     fclose(f);
+    int snap_day = -1;
     // MapItemMan id counter offset per item type, raised past every restored id.
     static const int counters[7] = {0, 0x08, 0x10, 0x0c, 0x14, 0, 0x18};
     int added = 0, skipped = 0, bad = 0;
@@ -597,9 +671,16 @@ static void restore_map_items(uint64_t mgid)
             break;
         uint8_t ty = s[o + 4], *d = s + o + 9;
         o += 9 + l;
+        if (ty == 0 && l == 8 + 0x200)
+            snap_day = d[8 + 0x156];
         if (ty == SNAP_PLAYER && l == 12 && restore_runes) {
             int32_t v[3];
             memcpy(v, d, 12), restore_player(base, v);
+        }
+        if (ty == SNAP_ENEMIES && enemy_hp && l % sizeof(struct enemy_hp) == 0) {
+            pending_hp_count = (int)(l / sizeof(struct enemy_hp)) < 512 ? (int)(l / sizeof(struct enemy_hp)) : 512;
+            memcpy(pending_hp, d, pending_hp_count * sizeof(struct enemy_hp));
+            pending_hp_until = unix_ms() + 300000;
         }
         if (ty != SNAP_MAP_ITEM || !restore_items)
             continue;
@@ -622,6 +703,7 @@ static void restore_map_items(uint64_t mgid)
         ((ArrayDtor_t)(base + 0x2690a5c))(rec + 8, 0x50, 1, base + 0x56fac0);
     }
     free(s);
+    restore_day(base, snap_day);
     uint8_t *session = *(uint8_t **)(base + 0x3c21ec8);
     log_line(skipped || bad ? LOG_WARN : LOG_INFO, "map-items-restore mgid=%llu added=%d skipped=%d bad=%d state=%d",
              (unsigned long long)mgid, added, skipped, bad, session ? *(int *)(session + 0xc) : -1);
@@ -665,7 +747,7 @@ static void take_snapshot(void)
     if (!snap_id_count)
         return;
     char path[MAX_PATH];
-    snprintf(path, MAX_PATH, "%.*sp2p_snapshot_auto.tmp", dll_dir_len, dll_dir);
+    snprintf(path, MAX_PATH, "%.*srekindle_run.tmp", dll_dir_len, dll_dir);
     HANDLE f = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     EnterCriticalSection(&log_lock);
     HANDLE old = snap_file;
@@ -691,6 +773,7 @@ static void take_snapshot(void)
     take_map_items(base);
     take_position(base);
     take_player(base);
+    take_enemies(base);
     in_snapshot = false;
 }
 
@@ -750,8 +833,8 @@ static void finish_snapshot(void)
     if (f != INVALID_HANDLE_VALUE)
         CloseHandle(f);
     char tmp[MAX_PATH], dst[MAX_PATH];
-    snprintf(tmp, MAX_PATH, "%.*sp2p_snapshot_auto.tmp", dll_dir_len, dll_dir);
-    snprintf(dst, MAX_PATH, "%.*sp2p_snapshot_run_%llu.bin", dll_dir_len, dll_dir, (unsigned long long)snap_mgid);
+    snprintf(tmp, MAX_PATH, "%.*srekindle_run.tmp", dll_dir_len, dll_dir);
+    snprintf(dst, MAX_PATH, "%.*srekindle_run_%llu.bin", dll_dir_len, dll_dir, (unsigned long long)snap_mgid);
     if (!snap_mgid || !MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING))
         DeleteFileA(tmp);
     else
@@ -781,6 +864,8 @@ static void hook_sync_update(void *mgr, float dt)
     static uint64_t last_grace_ms;
     if (graces && items_restored && now - last_grace_ms > 1000)
         last_grace_ms = now, fix_graces((uint8_t *)GetModuleHandleA(NULL));
+    if (items_restored)
+        restore_enemies((uint8_t *)GetModuleHandleA(NULL), now);
     if (restore_mgid && now - first_tick_ms > resume_snapshots_ms)
         apply_restore_clock();
     if (!streaming && helper_trampoline) {
@@ -813,14 +898,14 @@ static void hook_sync_update(void *mgr, float dt)
     stream_ungated(base, 0, mgr, dt);
     stream_ungated(base, 1, mgr, dt);
 }
-// Polls run_active.txt once a second: a new run gets its first snapshot first_snapshot_ms after the
+// Polls rekindle_active_run.txt once a second: a new run gets its first snapshot first_snapshot_ms after the
 // marker appears, retried every 10 s until one is finished.
 static DWORD WINAPI marker_thread(LPVOID unused)
 {
     (void)unused;
     uint64_t seen_mgid = 0, seen_ms = 0, asked_ms = 0;
     char marker[MAX_PATH];
-    snprintf(marker, MAX_PATH, "%.*srun_active.txt", dll_dir_len, dll_dir);
+    snprintf(marker, MAX_PATH, "%.*srekindle_active_run.txt", dll_dir_len, dll_dir);
     for (;; Sleep(1000)) {
         unsigned long long m = 0;
         FILE *f = fopen(marker, "r");
@@ -867,12 +952,13 @@ static void load_settings(void)
     restore_runes = GetPrivateProfileIntA("restore", "restore_runes", 1, path);
     boss_drops = GetPrivateProfileIntA("restore", "fix_boss_drops", 1, path);
     graces = GetPrivateProfileIntA("restore", "fix_graces", 1, path);
+    enemy_hp = GetPrivateProfileIntA("restore", "restore_enemy_hp", 1, path);
     // The log only holds this launch: an old one is removed even when nothing gets written.
     snprintf(log_path, MAX_PATH, "%.*srekindle_snapshot.log", (int)n, path);
     DeleteFileA(log_path);
-    log_line(LOG_INFO, "settings first=%llu every=%llu resume=%llu items=%d runes=%d drops=%d graces=%d",
+    log_line(LOG_INFO, "settings first=%llu every=%llu resume=%llu items=%d runes=%d drops=%d graces=%d enemy_hp=%d",
              (unsigned long long)first_snapshot_ms, (unsigned long long)snapshot_every_ms,
-             (unsigned long long)resume_snapshots_ms, restore_items, restore_runes, boss_drops, graces);
+             (unsigned long long)resume_snapshots_ms, restore_items, restore_runes, boss_drops, graces, enemy_hp);
 }
 
 // Waits until Steam has a user and its networking interface, then patches the game.

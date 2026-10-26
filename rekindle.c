@@ -1071,7 +1071,7 @@ static void emu_push_hello(uint16_t ack)
 }
 
 // ---- Auto restore: run marker, save planting, and fake-host answers built from the run's snapshot ----
-// run_active.txt holds the multi_game_id of the run in progress. GetMultiGameID sets it, GetResultData and
+// rekindle_active_run.txt holds the multi_game_id of the run in progress. GetMultiGameID sets it, GetResultData and
 // DeleteSession clear it. Without keep_online a restored run's fake host drop also sends DeleteSession.
 static char dll_dir[MAX_PATH];
 static int dll_dir_len;
@@ -1095,7 +1095,7 @@ static const uint8_t *find_bytes(const uint8_t *s, size_t n, const char *needle)
 }
 
 // Members of the lobby the game last created or joined; they join before the run has an id, so the list is
-// kept from then on. run_mates.txt holds "<mgid> <id>..."; a restore uses the first id as the fake host, so the
+// kept from then on. rekindle_mates.txt holds "<mgid> <id>..."; a restore uses the first id as the fake host, so the
 // slot the game keeps for it matches the teammate when they rejoin.
 static uint64_t run_mgid, run_mates[3];
 
@@ -1112,7 +1112,7 @@ static uint64_t trio_mate(void)
 static void save_mates(void)
 {
     char path[MAX_PATH];
-    snprintf(path, MAX_PATH, "%.*srun_mates.txt", dll_dir_len, dll_dir);
+    snprintf(path, MAX_PATH, "%.*srekindle_mates.txt", dll_dir_len, dll_dir);
     FILE *f = fopen(path, "w");
     if (!f)
         return;
@@ -1166,7 +1166,7 @@ static void run_marker_http(const void *data, size_t n)
     char path[MAX_PATH];
     if (!s || !n)
         return;
-    snprintf(path, MAX_PATH, "%.*srun_active.txt", dll_dir_len, dll_dir);
+    snprintf(path, MAX_PATH, "%.*srekindle_active_run.txt", dll_dir_len, dll_dir);
     // The host gets the id from GetMultiGameID; a guest first sees it in its JoinMultiplay request.
     if ((find_bytes(s, n, "\"ResponseGetMultiGameIDParams\"") ||
          (find_bytes(s, n, "\"RequestJoinMultiplayParams\"") && find_bytes(s, n, "\"relation_type\":\"GUEST\""))) &&
@@ -1180,7 +1180,7 @@ static void run_marker_http(const void *data, size_t n)
             note(LOG_INFO, "Run marker cleared");
         run_mgid = 0;
         memset(run_mates, 0, sizeof run_mates);
-        snprintf(path, MAX_PATH, "%.*srun_mates.txt", dll_dir_len, dll_dir);
+        snprintf(path, MAX_PATH, "%.*srekindle_mates.txt", dll_dir_len, dll_dir);
         DeleteFileA(path);
     }
 }
@@ -1502,14 +1502,17 @@ static DWORD WINAPI auto_restore(LPVOID unused)
     const char *appdata = getenv("APPDATA");
     if (!fake_self)
         fake_self = find_self(appdata);
-    snprintf(path, MAX_PATH, "%.*srun_active.txt", dll_dir_len, dll_dir);
+    // A rekindle_clock.txt left by a restore that never got far enough must not leak into this launch.
+    snprintf(path, MAX_PATH, "%.*srekindle_clock.txt", dll_dir_len, dll_dir);
+    DeleteFileA(path);
+    snprintf(path, MAX_PATH, "%.*srekindle_active_run.txt", dll_dir_len, dll_dir);
     FILE *f = cfg("restore", "auto_restore", 1) ? fopen(path, "r") : NULL;
     if (!f)
         return 0;
     if (fscanf(f, "%llu", &mgid) != 1)
         mgid = 0;
     fclose(f);
-    snprintf(path, MAX_PATH, "%.*sp2p_snapshot_run_%llu.bin", dll_dir_len, dll_dir, mgid);
+    snprintf(path, MAX_PATH, "%.*srekindle_run_%llu.bin", dll_dir_len, dll_dir, mgid);
     size_t n = 0;
     uint8_t *snapshot = mgid && fake_lobby ? read_all(path, &n) : NULL;
     if (!snapshot) {
@@ -1517,7 +1520,7 @@ static DWORD WINAPI auto_restore(LPVOID unused)
         return 0;
     }
     run_mgid = mgid;
-    snprintf(path, MAX_PATH, "%.*srun_mates.txt", dll_dir_len, dll_dir);
+    snprintf(path, MAX_PATH, "%.*srekindle_mates.txt", dll_dir_len, dll_dir);
     unsigned long long mm = 0, m0 = 0, m1 = 0;
     if ((f = fopen(path, "r"))) {
         if (fscanf(f, "%llu %llu %llu", &mm, &m0, &m1) >= 2 && mm == mgid) {
@@ -1535,9 +1538,9 @@ static DWORD WINAPI auto_restore(LPVOID unused)
     int r = plant_save(save, mgid, box, have_box);
     restore_mgid = mgid;
     note(r < 0 ? LOG_ERROR : LOG_INFO, "Auto restore mgid=%llu plant=%d box=%d", mgid, r, have_box);
-    // rekindle_snapshot.dll reads restore_clock.txt once Steam is up, seconds after this thread has run.
+    // rekindle_snapshot.dll reads rekindle_clock.txt once Steam is up, seconds after this thread has run.
     if (r >= 0 && clock) {
-        snprintf(path, MAX_PATH, "%.*srestore_clock.txt", dll_dir_len, dll_dir);
+        snprintf(path, MAX_PATH, "%.*srekindle_clock.txt", dll_dir_len, dll_dir);
         if ((f = fopen(path, "w")))
             fprintf(f, "%llu %llx\n", mgid, (unsigned long long)clock), fclose(f);
     }
