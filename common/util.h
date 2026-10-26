@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// The folder holding the DLLs, with a trailing separator; settings, logs and run files live there.
+// The folder holding rekindle.dll, with a trailing separator; settings, logs and run files live there.
 extern char dll_dir[MAX_PATH];
 extern int dll_dir_len;
 

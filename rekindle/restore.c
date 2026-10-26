@@ -13,9 +13,6 @@ DWORD WINAPI auto_restore(LPVOID unused)
     const char *appdata = getenv("APPDATA");
     if (!fake_self)
         fake_self = find_self(appdata);
-    // A rekindle_clock.txt left by a restore that never got far enough must not leak into this launch.
-    mod_path(path, CLOCK_FILE);
-    DeleteFileA(path);
     mod_path(path, ACTIVE_RUN_FILE);
     FILE *f = cfg("restore", "auto_restore", 1) ? fopen(path, "r") : NULL;
     if (!f)
@@ -49,11 +46,7 @@ DWORD WINAPI auto_restore(LPVOID unused)
     int r = plant_save(save, mgid, box, have_box);
     restore_mgid = mgid;
     note(r < 0 ? LOG_ERROR : LOG_INFO, "Auto restore mgid=%llu plant=%d box=%d", mgid, r, have_box);
-    // rekindle_snapshot.dll reads rekindle_clock.txt once Steam is up, seconds after this thread has run.
-    if (r >= 0 && clock) {
-        mod_path(path, CLOCK_FILE);
-        if ((f = fopen(path, "w")))
-            fprintf(f, "%llu %llx\n", mgid, (unsigned long long)clock), fclose(f);
-    }
+    if (r >= 0 && clock)
+        snapshot_restoring(mgid, clock);
     return 0;
 }

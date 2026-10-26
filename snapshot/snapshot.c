@@ -269,33 +269,30 @@ static void hook_sync_update(void *mgr, float dt)
 {
     if (!InterlockedExchange(&sync_tick_seen, 1))
         log_line(LOG_DEBUG, "sync-tick mgr=%p", mgr);
-    // Restored game: the clock file is read at the first tick, since rekindle.dll writes it after this DLL loads.
     static uint64_t first_tick_ms;
     uint64_t now = unix_ms();
-    if (!first_tick_ms) {
+    if (!first_tick_ms)
         first_tick_ms = now;
-        read_restore_clock();
-    }
     // A restored game takes snapshots again once its clock is back.
     // Ground items go back once the fake host is gone (session state no longer 6, guest).
     static bool items_restored;
     uint8_t *ses = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + SESSION_MAN_RVA);
-    if (restore_mgid && !items_restored && now - first_tick_ms > 10000 && ses && *(int *)(ses + 0xc) != 6) {
+    if (restoring_mgid && !items_restored && now - first_tick_ms > 10000 && ses && *(int *)(ses + 0xc) != 6) {
         items_restored = true;
         if (boss_drops)
             become_player_one((uint8_t *)GetModuleHandleA(NULL), ses);
-        restore_snapshot(restore_mgid);
+        restore_snapshot(restoring_mgid);
     }
     static uint64_t last_grace_ms;
     if (graces && items_restored && now - last_grace_ms > 1000)
         last_grace_ms = now, fix_graces((uint8_t *)GetModuleHandleA(NULL));
     if (items_restored)
         restore_enemies((uint8_t *)GetModuleHandleA(NULL), now);
-    if (restore_mgid && now - first_tick_ms > resume_snapshots_ms)
+    if (restoring_mgid && now - first_tick_ms > resume_snapshots_ms)
         apply_restore_clock();
     if (!streaming && helper_trampoline) {
         bool early = run_request && InterlockedExchange(&run_request, 0);
-        if ((early || now - last_auto_ms > snapshot_every_ms) && !restore_mgid) {
+        if ((early || now - last_auto_ms > snapshot_every_ms) && !restoring_mgid) {
             last_auto_ms = unix_ms();
             take_snapshot();
             streaming = snap_id_count > 0;

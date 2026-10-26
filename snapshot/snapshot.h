@@ -6,6 +6,7 @@
 #include "config.h"
 #include "game.h"
 #include "log.h"
+#include "modules.h"
 #include "snapshot_format.h"
 #include "util.h"
 
@@ -17,7 +18,7 @@ extern bool restore_items, restore_runes, boss_drops, graces, enemy_hp;
 
 // snapshot.c: what the game sends the fake peer while a snapshot is taken goes to the run file.
 extern uint64_t fake_peer, snap_mgid, done_mgid;
-// Set while rekindle.dll's run marker names a run that has no finished snapshot yet.
+// Set while the run marker names a run that has no finished snapshot yet.
 extern volatile LONG run_request;
 extern __thread bool in_join_build;
 void snap_write(uint32_t type, const uint8_t *data, int len);
@@ -26,9 +27,9 @@ bool snapshot_install(void);
 
 // join.c, clock.c
 void take_join(uint8_t *base);
-extern uint64_t restore_mgid, restore_clock;
+// Set from the auto restore until the restored run has its clock back.
+extern uint64_t restoring_mgid;
 void snap_clock(uint8_t *base);
-void read_restore_clock(void);
 void apply_restore_clock(void);
 void restore_day(uint8_t *base, int day);
 

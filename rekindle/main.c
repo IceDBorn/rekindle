@@ -58,6 +58,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID r)
     AddVectoredExceptionHandler(1, crash_veh);
     CloseHandle(CreateThread(NULL, 0, startup_patches, NULL, 0, NULL));
     patch_imports();
+    snapshot_start();
     // Local mode needs this DLL loaded early, before the game's EOS setup runs.
     if (!GetModuleHandleA("cl_server_redirector.dll"))
         patch_eos();

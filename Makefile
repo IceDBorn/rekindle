@@ -7,15 +7,12 @@ REKINDLE = $(wildcard rekindle/*.c)
 SNAPSHOT = $(wildcard snapshot/*.c)
 HEADERS = $(wildcard common/*.h rekindle/*.h snapshot/*.h)
 
-all: rekindle.dll rekindle_snapshot.dll
+all: rekindle.dll
 
-rekindle.dll: $(COMMON) $(REKINDLE) $(HEADERS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(COMMON) $(REKINDLE) -lbcrypt -lws2_32
-
-rekindle_snapshot.dll: $(COMMON) $(SNAPSHOT) $(HEADERS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(COMMON) $(SNAPSHOT)
+rekindle.dll: $(COMMON) $(REKINDLE) $(SNAPSHOT) $(HEADERS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(COMMON) $(REKINDLE) $(SNAPSHOT) -lbcrypt -lws2_32
 
 clean:
-	rm -f rekindle.dll rekindle_snapshot.dll
+	rm -f rekindle.dll
 
 .PHONY: all clean

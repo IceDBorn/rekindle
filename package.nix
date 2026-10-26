@@ -13,6 +13,6 @@ pkgs.pkgsCross.mingwW64.stdenv.mkDerivation {
   '';
   installPhase = ''
     mkdir -p $out
-    cp rekindle.dll rekindle_snapshot.dll $out/
+    cp rekindle.dll $out/
   '';
 }

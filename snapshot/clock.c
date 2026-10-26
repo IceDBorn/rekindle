@@ -1,10 +1,10 @@
 // Day clock: WorldAreaTime (StormTimer finds the same global) keeps a packed qword at +0x100,
 // hour at bit 34, minute at 39, second at 45.
 #include "snapshot.h"
-#include <stdio.h>
 #include <string.h>
 
-uint64_t restore_mgid, restore_clock;
+uint64_t restoring_mgid;
+static uint64_t restore_clock;
 
 // Clock record: type 0, len 8 + 0x200: the clock qword, then the WorldAreaTime struct for later study.
 void snap_clock(uint8_t *base)
@@ -18,18 +18,10 @@ void snap_clock(uint8_t *base)
     snap_write(0, rec, sizeof rec);
 }
 
-// rekindle.dll's auto restore names the restored run and its snapshot clock in rekindle_clock.txt.
-void read_restore_clock(void)
+void snapshot_restoring(uint64_t mgid, uint64_t clock)
 {
-    char rc_path[MAX_PATH];
-    mod_path(rc_path, CLOCK_FILE);
-    FILE *rc = fopen(rc_path, "r");
-    if (rc) {
-        unsigned long long m = 0, c = 0;
-        if (fscanf(rc, "%llu %llx", &m, &c) == 2)
-            restore_mgid = m, restore_clock = c;
-        fclose(rc);
-    }
+    restore_clock = clock;
+    restoring_mgid = mgid;
 }
 
 void apply_restore_clock(void)
@@ -37,12 +29,9 @@ void apply_restore_clock(void)
     // The join answer (kind 8) already set the snapshot clock; writing it again here would rewind the storm.
     uint8_t *w = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + WORLD_AREA_TIME_RVA);
     if (w)
-        log_line(LOG_INFO, "restore-clock mgid=%llu snapshot=%llx now=%llx day=%d", (unsigned long long)restore_mgid,
+        log_line(LOG_INFO, "restore-clock mgid=%llu snapshot=%llx now=%llx day=%d", (unsigned long long)restoring_mgid,
                  (unsigned long long)restore_clock, (unsigned long long)*(uint64_t *)(w + 0x100), w[0x156]);
-    restore_mgid = 0;
-    char path[MAX_PATH];
-    mod_path(path, CLOCK_FILE);
-    DeleteFileA(path);
+    restoring_mgid = 0;
 }
 
 // WorldPlayAreaManager keeps the day 1 and day 2 circle sets; a join loads day 1, so a day 2 run needs

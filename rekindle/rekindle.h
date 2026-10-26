@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "config.h"
 #include "log.h"
+#include "modules.h"
 #include "util.h"
 
 // An import of nightreign.exe that main.c points at hook, keeping the original in *real.
@@ -62,7 +63,7 @@ static inline void put_be32(uint8_t *p, uint32_t v) { put_be16(p, v >> 16), put_
 static inline uint16_t get_be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
 
 // run_marker.c: the run in progress and its lobby mates.
-extern uint64_t run_mgid, run_mates[3];
+extern uint64_t run_mates[3];
 void run_marker_http(const void *data, size_t n);
 void note_mate(uint64_t id);
 void reset_mates(void);
