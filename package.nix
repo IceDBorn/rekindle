@@ -9,8 +9,7 @@ pkgs.pkgsCross.mingwW64.stdenv.mkDerivation {
   inherit src;
   dontConfigure = true;
   buildPhase = ''
-    $CC -O2 -Wall -shared -static -s -o rekindle.dll rekindle.c -lbcrypt -lws2_32
-    $CC -O2 -Wall -shared -static -s -o rekindle_snapshot.dll rekindle_snapshot.c
+    make CC=$CC
   '';
   installPhase = ''
     mkdir -p $out
