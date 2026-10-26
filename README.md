@@ -1,0 +1,78 @@
+# Rekindle
+
+Rekindle is a native mod for Elden Ring Nightreign that brings back a run after the game crashes. Relaunch the game and it offers to rejoin the run, with the map, items and enemies as they were a few seconds before the crash.
+
+It works for solo runs, for co-op runs where every player crashed, and offline.
+
+## How it works
+
+- During a run, Rekindle writes a snapshot of the host's world every 30 seconds to `rekindle_run_<multi_game_id>.bin`. A snapshot is what the game would send a player joining at that moment. `rekindle_active_run.txt` names the run in progress.
+- On the next launch, if a run was still in progress, Rekindle adds a rejoin record to `NR0000.sl2`, so the game offers to resume the run. It backs up the save to `NR0000.sl2.pre_restore` first.
+- The rejoin goes to a fake lobby. A fake host answers the game's P2P link with the snapshot, then leaves like a crashed host, and the player keeps the run as its new host.
+- After the join, Rekindle puts back what a join does not carry. That is ground items, runes earned since the last save, the spawn position, the player number (so bosses drop dormant powers), field boss graces, enemy and boss HP, and the time of day.
+- In co-op, the first player to restore creates a lobby tagged with the run id. The other players who crashed find it by lobby search and rejoin together.
+- It also removes the 300 second AFK kick and the rejoin penalty, and a player who crashed while downed comes back standing.
+
+Without `cl_server_redirector.dll` loaded, Rekindle answers every game server request itself from a loopback server and stubs EOS. The game never contacts FromSoftware servers in that mode.
+
+## Install
+
+Rekindle loads with [me3](https://github.com/garyttierney/me3). Put `rekindle.dll` and `rekindle.ini` in one folder and add the DLL to your profile as an early native:
+
+```toml
+[[natives]]
+path = "dll/rekindle.dll"
+load_early = true
+```
+
+Rekindle reads `rekindle.ini` from the folder that holds the DLL and writes its data files and `rekindle.log` there too. Missing keys keep their defaults.
+
+The game addresses are for one build of `nightreign.exe`. A game update can break Rekindle until the addresses are updated.
+
+## Settings
+
+| Section | Key | Default | Effect |
+| --- | --- | --- | --- |
+| restore | auto_restore | 1 | Restore a crashed run on the next launch. |
+| restore | keep_online | 1 | Keep a restored run online after the fake host leaves. |
+| restore | restore_ground_items | 1 | Put items left on the ground back. |
+| restore | restore_runes | 1 | Give back runes earned after the game last wrote the save. |
+| restore | restore_position | 1 | Use the snapshot position when the save has none, for a crash in the first seconds of a run. |
+| restore | fix_boss_drops | 1 | Make the restored player number 1 again, so bosses drop dormant powers. |
+| restore | fix_graces | 1 | Light field boss graces again after reload events switch them off. |
+| restore | restore_enemy_hp | 1 | Put back the HP of damaged enemies and bosses that were alive in the snapshot. |
+| penalties | remove_afk_kick | 1 | Remove the 300 second idle kick. |
+| penalties | remove_rejoin_penalty | 1 | Rejoining after a crash costs no level and drops no runes. |
+| penalties | respawn_if_downed | 1 | A player who crashed while downed comes back standing. |
+| snapshots | first_after_s | 10 | Seconds into a run before the first snapshot. |
+| snapshots | every_s | 30 | Seconds between snapshots. |
+| snapshots | resume_after_restore_s | 60 | Seconds after a restore before snapshots start again. |
+| log | level | error | `off`, `error`, `warn`, `info` or `debug`. Debug also logs the game's WinHTTP and Steam calls. |
+
+## Build
+
+With Nix:
+
+```sh
+nix run .      # builds rekindle.dll in this folder
+nix build      # builds it into ./result
+nix develop    # shell with the MinGW toolchain, then run make
+```
+
+Without Nix, any MinGW-w64 GCC works:
+
+```sh
+make CC=x86_64-w64-mingw32-gcc
+```
+
+The DLL links statically and imports only Windows system DLLs.
+
+## Layout
+
+- `common/` has the log, settings, import patching, game addresses and the snapshot file format. `modules.h` declares the calls between the two halves.
+- `rekindle/` is the restore side. It has the save planting, the fake lobby and fake host, the co-op relay, the local server, the WinHTTP and Steam hooks, and the game patches.
+- `snapshot/` takes the snapshots and puts back the rest of the world after a restore.
+
+## License
+
+AGPL-3.0. See [LICENSE](LICENSE).
