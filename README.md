@@ -2,15 +2,17 @@
 
 Rekindle is a native mod for Elden Ring Nightreign that brings back a run after the game crashes. Relaunch the game and it offers to rejoin the run, with the map, items and enemies as they were a few seconds before the crash.
 
-It works for solo runs, for co-op runs where every player crashed, and offline.
+It works for solo runs and co-op runs, after a crash or a quit to the desktop or title screen, and offline. Quitting to the title screen still needs a relaunch before the restore.
 
 ## How it works
 
-- During a run, Rekindle writes a snapshot of the host's world every 30 seconds to `rekindle_run_<multi_game_id>.bin`. A snapshot is what the game would send a player joining at that moment. `rekindle_active_run.txt` names the run in progress.
+- During a run, Rekindle writes a snapshot of the host's world every 30 seconds to `rekindle_run_<multi_game_id>.bin`. A snapshot is what the game would send a player joining at that moment. `rekindle_active_run.txt` names the run in progress, and only the end of the run clears it, so a quit keeps the run restorable. `rekindle_mates.txt` lists the teammates and the run's Steam lobby.
 - On the next launch, if a run was still in progress, Rekindle adds a rejoin record to `NR0000.sl2`, so the game offers to resume the run. It backs up the save to `NR0000.sl2.pre_restore` first.
+- In co-op, the restore first checks the run's lobby. If a teammate is still in the run, the game rejoins them as usual.
 - The rejoin goes to a fake lobby. A fake host answers the game's P2P link with the snapshot, then leaves like a crashed host, and the player keeps the run as its new host.
 - After the join, Rekindle puts back what a join does not carry. That is ground items, runes earned since the last save, the spawn position, the player number (so bosses drop dormant powers), field boss graces, enemy and boss HP, and the time of day.
-- In co-op, the first player to restore creates a lobby tagged with the run id. The other players who crashed find it by lobby search and rejoin together.
+- When every player left, the first player to restore creates a lobby tagged with the run id. The others find it by lobby search and wait until the first player's world has loaded, then join.
+- Teammate names show the ping and packet loss to that player. Rekindle sends a small ping with the player's in-game name on its own P2P channel every 500 ms, and the teammate's Rekindle sends it back. Loss comes from gaps in the sequence numbers of the game's own packets, so it shows even when the teammate has no Rekindle.
 - It also removes the 300 second AFK kick and the rejoin penalty, and a player who crashed while downed comes back standing.
 
 Without `cl_server_redirector.dll` loaded, Rekindle answers every game server request itself from a loopback server and stubs EOS. The game never contacts FromSoftware servers in that mode.
@@ -47,6 +49,8 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 | snapshots | first_after_s | 10 | Seconds into a run before the first snapshot. |
 | snapshots | every_s | 30 | Seconds between snapshots. |
 | snapshots | resume_after_restore_s | 60 | Seconds after a restore before snapshots start again. |
+| ping | show_ping | 1 | Show the round trip time next to teammate names. Only teammates who also run Rekindle answer. |
+| ping | show_loss | 1 | Show packet loss from a teammate next to their name when it reaches 1%. |
 | log | level | error | `off`, `error`, `warn`, `info` or `debug`. Debug also logs the game's WinHTTP and Steam calls. |
 
 ## Build

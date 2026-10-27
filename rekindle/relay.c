@@ -6,7 +6,8 @@
 
 uint64_t game_lobby, real_lobby, restore_mgid;
 static uint64_t create_call, search_call, found_lobby;
-static bool lobby_decided;
+static bool lobby_decided, found_ready, waiting, world_ready;
+static uint64_t wait_since;
 void *mm_self, *utils_self;
 static void *mm_stub[44];
 typedef uint64_t (*Fwd_t)(void *, uint64_t, uint64_t, uint64_t);
@@ -15,6 +16,9 @@ typedef void (*StrFilter_t)(void *, const char *, const char *, int);
 typedef void (*IntFilter_t)(void *, int);
 typedef uint64_t (*Call_t)(void *);
 #define RELAY_KEY "nrk_mgid"
+#define READY_KEY "nrk_ready"
+#define READY_WAIT_MS 180000
+typedef const char *(*GetData_t)(void *, uint64_t, const char *);
 
 uint64_t tr(uint64_t v)
 {
@@ -26,15 +30,54 @@ static void relay_decide(uint64_t lobby)
 {
     if (lobby_decided || !restore_mgid || !mm_self)
         return;
+    // Joining while the first restorer still talks to its fake host breaks both: the fake host has our id.
+    if (found_lobby && !found_ready && lobby == fake_lobby) {
+        if (!waiting)
+            wait_since = unix_ms(), note(LOG_INFO, "Relay 0x%llx not ready, waiting", (unsigned long long)found_lobby);
+        waiting = true;
+        return;
+    }
     lobby_decided = true;
+    waiting = false;
     if (found_lobby) {
         game_lobby = lobby, real_lobby = found_lobby;
-        fake_lobby = 0, fake_host = 0;
+        fake_lobby = 0, fake_host = 0, run_lobby = found_lobby;
+        save_mates();
         note(LOG_INFO, "Relay join 0x%llx as 0x%llx", (unsigned long long)found_lobby, (unsigned long long)lobby);
+    } else if (lobby == fake_lobby && lobby_from_save) {
+        lobby_decided = false;
     } else if (lobby == fake_lobby) {
         game_lobby = lobby;
         create_call = ((Create_t)mm_orig[13])(mm_self, 2, 3);
         note(LOG_INFO, "Relay create call=0x%llx", (unsigned long long)create_call);
+    }
+}
+
+// LobbyDataUpdate for the save's lobby: alive means a teammate kept the run, so the game's own rejoin
+// takes over and the restore stands down; dead means the restore goes on as usual.
+void relay_resolve(bool live)
+{
+    lobby_from_save = false;
+    if (!live) {
+        relay_decide(fake_lobby);
+        return;
+    }
+    note(LOG_INFO, "Rejoin lobby 0x%llx is alive, the game rejoins it", (unsigned long long)fake_lobby);
+    fake_lobby = 0, fake_host = 0, restore_mgid = 0, lobby_decided = true;
+    snapshot_restoring(0, 0);
+}
+
+bool relay_hold_505(void)
+{
+    return waiting;
+}
+
+void relay_ready(void)
+{
+    world_ready = true;
+    if (real_lobby && mm_self && !found_lobby) {
+        ((Fwd_t)mm_stub[20])(mm_self, real_lobby, (uint64_t)READY_KEY, (uint64_t)"1");
+        note(LOG_INFO, "Relay lobby 0x%llx ready", (unsigned long long)real_lobby);
     }
 }
 
@@ -64,6 +107,11 @@ void relay_tick(void)
         ((IntFilter_t)mm_orig[9])(mm_self, 3);
         search_call = ((Call_t)mm_orig[4])(mm_self);
     }
+    if (waiting && (found_ready || now - wait_since > READY_WAIT_MS)) {
+        found_ready = true;
+        relay_decide(fake_lobby);
+        ((Fwd_t)mm_stub[28])(mm_self, found_lobby, 0, 0);
+    }
     if (search_call) {
         // LobbyMatchList_t (510): lobbies matching u32.
         uint32_t r;
@@ -71,7 +119,9 @@ void relay_tick(void)
             search_call = 0;
             if (r != 0xffffffff && r > 0 && !lobby_decided) {
                 ((GetId_t)mm_orig[12])(mm_self, &found_lobby, 0);
-                note(LOG_INFO, "Relay found %u, lobby 0x%llx", r, (unsigned long long)found_lobby);
+                const char *v = ((GetData_t)mm_orig[19])(mm_self, found_lobby, READY_KEY);
+                found_ready = v && *v == 0x31;
+                note(LOG_INFO, "Relay found %u, lobby 0x%llx ready=%d", r, (unsigned long long)found_lobby, found_ready);
             }
         }
     }
@@ -90,9 +140,13 @@ void relay_tick(void)
         char v[24];
         snprintf(v, sizeof v, "%llu", (unsigned long long)restore_mgid);
         memcpy(&real_lobby, r + 8, 8);
+        run_lobby = real_lobby;
+        save_mates();
         ((Fwd_t)mm_stub[20])(mm_self, real_lobby, (uint64_t)"inviteParam", (uint64_t)"0");
         ((Fwd_t)mm_stub[20])(mm_self, real_lobby, (uint64_t)RELAY_KEY, (uint64_t)v);
         note(LOG_INFO, "Relay lobby 0x%llx", (unsigned long long)real_lobby);
+        if (world_ready)
+            relay_ready();
     }
 }
 

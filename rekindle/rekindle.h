@@ -27,6 +27,8 @@ bool local_mode(void);
 #define DEFAULT_HOST 76561200107749360ULL
 extern uint64_t fake_lobby, fake_host, fake_self;
 extern bool run_restored;
+// The rejoin lobby came from the save; its first LobbyDataUpdate tells whether a teammate is still in the run.
+extern bool lobby_from_save;
 extern void **mm_orig, **utils_orig;
 // After the replay the fake host leaves the lobby like a crashed host: 506 at host_gone_at, then self owns it.
 extern uint64_t host_gone_at;
@@ -43,6 +45,10 @@ extern void *mm_self, *utils_self;
 uint64_t tr(uint64_t v);
 void relay_wrap_mm(void **nv);
 void relay_tick(void);
+void relay_resolve(bool live);
+// A 505 for the fake lobby that waits until the relay lobby is ready.
+bool relay_hold_505(void);
+bool emu_active(void);
 
 // patches.c
 extern bool keep_online_ok;
@@ -62,10 +68,16 @@ static inline void put_be16(uint8_t *p, uint16_t v) { p[0] = v >> 8, p[1] = (uin
 static inline void put_be32(uint8_t *p, uint32_t v) { put_be16(p, v >> 16), put_be16(p + 2, (uint16_t)v); }
 static inline uint16_t get_be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 | p[1]); }
 
+// ping.c: ping and packet loss next to teammate names.
+extern void *friends_self, **friends_orig;
+void ping_seen(void *self, void **vt, uint64_t id, const uint8_t *d, uint32_t n, int channel, bool incoming);
+DWORD WINAPI ping_thread(LPVOID unused);
+
 // run_marker.c: the run in progress and its lobby mates.
-extern uint64_t run_mates[3];
+extern uint64_t run_mates[3], run_lobby;
 void run_marker_http(const void *data, size_t n);
-void note_mate(uint64_t id);
+void note_mate(uint64_t id, uint64_t lobby);
+void save_mates(void);
 void reset_mates(void);
 uint64_t trio_mate(void);
 

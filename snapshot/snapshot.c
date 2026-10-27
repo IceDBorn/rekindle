@@ -12,7 +12,7 @@ static SendHelper_t helper_trampoline;
 static uint8_t fake_peer_obj[0x1000];
 uint64_t fake_peer = (uint64_t)(uintptr_t)fake_peer_obj;
 static uint32_t snap_ids[512];
-static int snap_id_count;
+static int snap_id_count, snap_stream_count;
 static uint64_t snap_start_ms;
 static HANDLE snap_file = INVALID_HANDLE_VALUE;
 static __thread bool in_snapshot;
@@ -33,6 +33,7 @@ void snap_write(uint32_t type, const uint8_t *data, int len)
     memcpy(hdr + 5, &l, 4);
     DWORD w;
     EnterCriticalSection(&log_lock);
+    snap_stream_count += type == 0x37 || type == 0x5e;
     WriteFile(snap_file, hdr, sizeof hdr, &w, NULL);
     WriteFile(snap_file, data, l, &w, NULL);
     LeaveCriticalSection(&log_lock);
@@ -177,6 +178,7 @@ static void take_snapshot(void)
     snap_file = f;
     snap_start_ms = now;
     snap_mgid = 0;
+    snap_stream_count = 0;
     LeaveCriticalSection(&log_lock);
     if (old != INVALID_HANDLE_VALUE)
         CloseHandle(old);
@@ -258,11 +260,13 @@ static void finish_snapshot(void)
     char tmp[MAX_PATH], dst[MAX_PATH];
     mod_path(tmp, RUN_TMP_FILE);
     mod_path(dst, RUN_FILE, (unsigned long long)snap_mgid);
-    if (!snap_mgid || !MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING))
+    // Without 0x37/0x5e (world not loaded yet) the fake host never finishes, so keep the older snapshot.
+    if (!snap_mgid || !snap_stream_count || !MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING))
         DeleteFileA(tmp);
     else
         done_mgid = snap_mgid;
-    log_line(snap_mgid ? LOG_INFO : LOG_DEBUG, "auto-snapshot mgid=%llu", (unsigned long long)snap_mgid);
+    log_line(snap_mgid && snap_stream_count ? LOG_INFO : LOG_DEBUG, "auto-snapshot mgid=%llu stream=%d",
+             (unsigned long long)snap_mgid, snap_stream_count);
 }
 
 static void hook_sync_update(void *mgr, float dt)
@@ -282,6 +286,7 @@ static void hook_sync_update(void *mgr, float dt)
         if (boss_drops)
             become_player_one((uint8_t *)GetModuleHandleA(NULL), ses);
         restore_snapshot(restoring_mgid);
+        relay_ready();
     }
     static uint64_t last_grace_ms;
     if (graces && items_restored && now - last_grace_ms > 1000)

@@ -190,6 +190,8 @@ static void wrap_iface(void *obj, const char *ver)
         install_fakes(kind, vt, nv, slots);
         if (kind == 1)
             mm_self = obj;
+        else if (kind == 2)
+            friends_self = obj, friends_orig = vt;
         else if (kind == 4)
             utils_self = obj;
         ifaces[k].name = _strdup(ver);
@@ -267,14 +269,21 @@ static void cb_run0(void *self, void *p, uint64_t b, uint64_t c)
 static void cb_run1(void *self, void *p, uint64_t b, uint64_t c)
 {
     // LobbyDataUpdate_t (505): lobby u64, member u64, success byte at 16.
+    if (lobby_from_save && *(int *)((uint8_t *)self + 0xc) == 505 && *(uint64_t *)p == fake_lobby)
+        relay_resolve(((uint8_t *)p)[16] != 0);
     if (fake_lobby && *(int *)((uint8_t *)self + 0xc) == 505 && *(uint64_t *)p == fake_lobby &&
         !((uint8_t *)p)[16]) {
         ((uint8_t *)p)[16] = 1;
         note(LOG_DEBUG, "505 success forced");
     }
+    if (relay_hold_505() && *(int *)((uint8_t *)self + 0xc) == 505 && *(uint64_t *)p == fake_lobby)
+        return;
     cb_relay(self, p);
+    // A teammate who joins the relay lobby while the fake host (their id) still runs must not reach the game.
+    if (emu_active() && *(int *)((uint8_t *)self + 0xc) == 506 && ((uint64_t *)p)[1] == fake_host)
+        return;
     if (*(int *)((uint8_t *)self + 0xc) == 506 && ((uint32_t *)p)[6] & 1)
-        note_mate(((uint64_t *)p)[1]);
+        note_mate(((uint64_t *)p)[1], tr(((uint64_t *)p)[0]));
     log_cb(self, 1, p, b, c);
     ((Run_t)((void **)(*(void ***)self)[-1])[1])(self, p, b, c);
 }

@@ -5,7 +5,7 @@
 
 uint64_t fake_lobby, fake_host, fake_self;
 static uint64_t fake_join_call;
-bool run_restored;
+bool run_restored, lobby_from_save;
 void **mm_orig, **utils_orig;
 uint64_t host_gone_at;
 volatile LONG host_gone;
@@ -35,7 +35,7 @@ static uint64_t *fk_member(void *self, uint64_t *ret, uint64_t lobby, int i)
 {
     if (lobby != fake_lobby || (host_gone && real_lobby)) {
         ((GetMember_t)mm_orig[18])(self, ret, tr(lobby), i);
-        note_mate(*ret);
+        note_mate(*ret, tr(lobby));
         return ret;
     }
     *ret = i == 0 ? fake_self : i == 1 && !host_gone ? fake_host : 0;
@@ -90,6 +90,9 @@ static bool fk_result(void *self, uint64_t call, void *buf, int cub, int expecte
 // Points the wrapped vtable slots of each interface kind (see wrap_iface) at the fakes.
 void install_fakes(int kind, void **vt, void **nv, int slots)
 {
+    // Ping needs the P2P wrapper even when a relay join or a live rejoin has already dropped the fake lobby.
+    if (kind == 6 && slots > 6)
+        emu_wrap_net(vt, nv);
     if (!fake_lobby)
         return;
     if (kind == 1 && slots > 37) {
@@ -105,7 +108,5 @@ void install_fakes(int kind, void **vt, void **nv, int slots)
         nv[13] = fk_result;
     } else if (kind == 5 && slots > 15) {
         emu_wrap_user(vt, nv);
-    } else if (kind == 6 && slots > 6) {
-        emu_wrap_net(vt, nv);
     }
 }

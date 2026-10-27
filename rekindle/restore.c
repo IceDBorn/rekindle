@@ -29,12 +29,16 @@ DWORD WINAPI auto_restore(LPVOID unused)
     }
     run_mgid = mgid;
     mod_path(path, MATES_FILE);
-    unsigned long long mm = 0, m0 = 0, m1 = 0;
+    unsigned long long mm = 0, m0 = 0, m1 = 0, lobby = 0;
     if ((f = fopen(path, "r"))) {
-        if (fscanf(f, "%llu %llu %llu", &mm, &m0, &m1) >= 2 && mm == mgid) {
-            run_mates[0] = m0, run_mates[1] = m1;
+        int k = fscanf(f, "%llu %llu %llu", &mm, &m0, &m1);
+        if (k >= 2 && mm == mgid) {
+            run_mates[0] = m0, run_mates[1] = k == 3 ? m1 : 0;
             fake_host = m0;
             note(LOG_INFO, "Auto restore fake host = mate %llu", m0);
+            // Without a rejoin record in the save (a quit), plant the run's own lobby and check it is still alive.
+            if (fscanf(f, " lobby %llu", &lobby) == 1 && lobby)
+                fake_lobby = run_lobby = lobby, lobby_from_save = true;
         }
         fclose(f);
     }

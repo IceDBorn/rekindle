@@ -279,6 +279,9 @@ static void emu_on_frame(const uint8_t *f, size_t len)
                 emu_answer(0x42, id);
                 if (!emu_stream_t0)
                     emu_stream_t0 = unix_ms();
+                // An old snapshot without a stream: leave once the 0x42 burst is over instead of never.
+                if (!emu_stream_len)
+                    host_gone_at = unix_ms() + 10000;
             }
         }
     }
@@ -292,8 +295,14 @@ static void **user_orig;
 typedef int (*BeginAuth_t)(void *, const void *, int, uint64_t);
 typedef void (*EndAuth_t)(void *, uint64_t);
 
-// Once the fake host has left, its id may belong to the real teammate rejoining: pass everything through.
-#define EMU_ID(id) ((id) == fake_host && !host_gone)
+// fake_host may be a real teammate, so fake it only from joining the fake lobby until the fake host has left.
+#define EMU_ON (fake_host && run_restored && !host_gone)
+#define EMU_ID(id) ((id) == fake_host && EMU_ON)
+
+bool emu_active(void)
+{
+    return EMU_ON;
+}
 
 static int us_begin(void *self, const void *ticket, int len, uint64_t id)
 {
@@ -342,8 +351,10 @@ typedef bool (*P2PState_t)(void *, uint64_t, uint8_t *);
 
 static bool nk_send(void *self, uint64_t id, const void *data, uint32_t len, int type, int channel)
 {
-    if (!EMU_ID(id))
+    if (!EMU_ID(id)) {
+        ping_seen(self, net_orig, id, data, len, channel, false);
         return ((P2PSend_t)net_orig[0])(self, id, data, len, type, channel);
+    }
     EnterCriticalSection(&emu_lock);
     const uint8_t *p = data;
     for (uint32_t i = 0; i + 2 <= len;) {
@@ -359,7 +370,7 @@ static bool nk_send(void *self, uint64_t id, const void *data, uint32_t len, int
 
 static bool nk_avail(void *self, uint32_t *size, int channel)
 {
-    if (channel == EMU_CHANNEL && fake_host && !host_gone) {
+    if (channel == EMU_CHANNEL && EMU_ON) {
         EnterCriticalSection(&emu_lock);
         emu_pump();
         bool have = emu_qhead != emu_qtail;
@@ -374,7 +385,7 @@ static bool nk_avail(void *self, uint32_t *size, int channel)
 
 static bool nk_read(void *self, void *dest, uint32_t cap, uint32_t *size, uint64_t *remote, int channel)
 {
-    if (channel == EMU_CHANNEL && fake_host && !host_gone) {
+    if (channel == EMU_CHANNEL && EMU_ON) {
         EnterCriticalSection(&emu_lock);
         emu_pump();
         bool have = emu_qhead != emu_qtail;
@@ -391,7 +402,19 @@ static bool nk_read(void *self, void *dest, uint32_t cap, uint32_t *size, uint64
         if (have)
             return true;
     }
-    return ((P2PRead_t)net_orig[2])(self, dest, cap, size, remote, channel);
+    uint32_t n = 0;
+    uint64_t from = 0;
+    bool ok = ((P2PRead_t)net_orig[2])(self, dest, cap, &n, &from, channel);
+    // The real teammate behind the fake host id, early: their packets would mix into the emulated host.
+    if (ok && EMU_ID(from))
+        return false;
+    if (size)
+        *size = n;
+    if (remote)
+        *remote = from;
+    if (ok)
+        ping_seen(self, net_orig, from, dest, n < cap ? n : cap, channel, true);
+    return ok;
 }
 
 static bool nk_accept(void *self, uint64_t id)

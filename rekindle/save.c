@@ -106,10 +106,12 @@ int plant_save(const char *path, uint64_t mgid, const uint8_t box[20], bool have
     uint8_t *na = malloc(an);
     int ret = 0;
     if (!memcmp(a + 0x5485, rec, 4) && !memcmp(a + 0x546d, mg, 8)) {
-        // A co-op save already holds the game's own rejoin record for this run: point it at the fake lobby.
-        memcpy(na, a, an);
-        memcpy(na + 0x5489, &fake_lobby, 8);
-        ret = 2;
+        // A co-op save already holds the game's own rejoin record for this run. Keep its lobby: if a teammate
+        // is still in it, the game rejoins them; if it is dead, the restore fakes it (lobby_from_save).
+        memcpy(&fake_lobby, a + 0x5489, 8);
+        lobby_from_save = true;
+        free(na);
+        return free(s), 2;
     } else if (memcmp(a + 0x5485, z7, 7)) {
         free(na);
         return free(s), -6;
