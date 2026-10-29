@@ -52,6 +52,8 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 | snapshots | stop_before_boss_s | 60 | Real seconds before a boss phase when snapshots stop, so a restore leaves time to rejoin. The boss restarts. |
 | ping | show_ping | 1 | Show the round trip time next to teammate names. Only teammates who also run Rekindle answer. |
 | ping | show_loss | 1 | Show packet loss from a teammate next to their name when it reaches 1%. |
+| ping | hud_labels | 1 | Show ping and loss in the HUD party list. |
+| ping | overhead_labels | 0 | Show ping and loss in the name labels above teammates. |
 | log | level | error | `off`, `error`, `warn`, `info` or `debug`. Debug also logs the game's WinHTTP and Steam calls. |
 
 ## Build

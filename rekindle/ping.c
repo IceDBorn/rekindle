@@ -16,11 +16,12 @@
 #define PEER_TTL_MS 10000
 #define LOSS_WINDOW_MS 2000
 #define NAME_REFRESH_MS 5000
+#define TEXT_REFRESH_MS 2000
 #define MAX_PEERS 5
 #define SET_UI_TEXT_RVA 0x792c70
 
 struct peer {
-    uint64_t id, seen_ms, next_ping_ms, pong_ms, name_ms;
+    uint64_t id, seen_ms, next_ping_ms, pong_ms, name_ms, text_ms;
     uint32_t rtt[5], rtt_n, ping_seq, got, loss_tenths;
     uint16_t seq_next, seq_start;
     bool seq_on;
@@ -44,7 +45,7 @@ static struct peer peers[MAX_PEERS];
 static SRWLOCK peers_lock = SRWLOCK_INIT;
 static void *volatile net_self;
 static void **net_vt;
-static bool show_ping = true, show_loss = true;
+static bool show_ping = true, show_loss = true, hud_on = true, over_on;
 static double qpc_per_ms = 1;
 
 typedef bool (*Send_t)(void *, uint64_t, const void *, uint32_t, int, int);
@@ -224,7 +225,9 @@ static void tick(uint64_t now, uint64_t *loss_ms)
             note(LOG_DEBUG, "Ping peer %llx rtt_n=%u pong_age=%llu got=%u loss=%u", (unsigned long long)p->id,
                  p->rtt_n, (unsigned long long)(now - p->pong_ms), p->got, p->loss_tenths);
         }
-        build_text(p, now);
+        // The labels redraw at different times; a slower text keeps them showing the same value.
+        if (now - p->text_ms >= TEXT_REFRESH_MS || (p->extra[0] && now - p->pong_ms >= PONG_TTL_MS))
+            build_text(p, now), p->text_ms = now;
     }
     ReleaseSRWLockExclusive(&peers_lock);
     for (int i = 0; i < MAX_PEERS; i++) {
@@ -247,10 +250,26 @@ static void tick(uint64_t now, uint64_t *loss_ms)
     }
 }
 
-// The game's player name labels: in the lobby, and two in the HUD party list. Each passes the name in rdx.
+// The game's player name labels, each passing the name in rdx: the lobby, and two shared by the HUD party list
+// and the labels above teammates.
+static const uint32_t sites[] = {0x9952e4, 0x7956c4, 0x79576b};
+
 static void hook_set_ui_text(void *h, const wchar_t *s)
 {
-    if (s && s[0]) {
+    uint32_t site = (uint32_t)((uint8_t *)__builtin_return_address(0) - 5 - (uint8_t *)GetModuleHandleA(NULL));
+    int k = 0;
+    while (k < 3 && sites[k] != site)
+        k++;
+    // At 0x7956c4 the caller two frames up tells the labels above teammates (0x998a02) from the HUD.
+    bool on = hud_on;
+    if (k == 0) {
+        on = over_on;
+    } else if (k == 1) {
+        void *bt[3] = {0};
+        RtlCaptureStackBackTrace(1, 3, bt, NULL);
+        on = (uint8_t *)bt[2] - (uint8_t *)GetModuleHandleA(NULL) == 0x998a02 ? over_on : hud_on;
+    }
+    if (on && s && s[0]) {
         AcquireSRWLockShared(&peers_lock);
         for (int i = 0; i < MAX_PEERS; i++)
             if (peers[i].extra[0] && !wcscmp(s, peers[i].game_name[0] ? peers[i].game_name : peers[i].name)) {
@@ -261,11 +280,11 @@ static void hook_set_ui_text(void *h, const wchar_t *s)
                 return;
             }
         ReleaseSRWLockShared(&peers_lock);
-        if (log_level >= LOG_DEBUG) {
-            char line[200];
-            WideCharToMultiByte(CP_UTF8, 0, s, -1, line, sizeof line, NULL, NULL);
-            log_dedup("UiName", line);
-        }
+    }
+    if (log_level >= LOG_DEBUG && s && s[0]) {
+        char line[200];
+        WideCharToMultiByte(CP_UTF8, 0, s, -1, line, sizeof line, NULL, NULL);
+        log_dedup("UiName", line);
     }
     real_set_ui_text(h, s);
 }
@@ -283,7 +302,7 @@ DWORD WINAPI ping_thread(LPVOID unused)
 {
     (void)unused;
     show_ping = cfg("ping", "show_ping", 1), show_loss = cfg("ping", "show_loss", 1);
-    static const uint32_t sites[] = {0x9952e4, 0x7956c4, 0x79576b};
+    hud_on = cfg("ping", "hud_labels", 1), over_on = cfg("ping", "overhead_labels", 0);
     uint8_t *base = (uint8_t *)GetModuleHandleA(NULL);
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);

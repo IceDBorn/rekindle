@@ -85,7 +85,7 @@ void reset_mates(void);
 uint64_t trio_mate(void);
 
 // answers.c, save.c, restore.c
-bool build_answers(const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20]);
+bool build_answers(uint64_t mgid, const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20]);
 int plant_save(const char *path, uint64_t mgid, const uint8_t box[20], bool have_box);
 uint64_t find_self(const char *appdata);
 DWORD WINAPI auto_restore(LPVOID unused);

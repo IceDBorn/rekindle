@@ -84,6 +84,19 @@ static void hook_send_helper(void *mgr, uint64_t *peer, uint32_t type, const uin
         return;
     }
     probe_send("send", peer ? *peer : 0, type, data, len);
+    // A rejoin request (0x60, built at 0x140de15b0: player_id, PlayerGameData +0xec, ...) must carry the run's number;
+    // the host's check (FUN_140b4f560) matches it against the restored player list.
+    int no = restoring_mgid && type == 0x60 && data && len >= 8 && len <= 256 ? own_recorded_number() : 0;
+    if (no && no != *(int *)(data + 4)) {
+        uint8_t req[256], *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
+        uint8_t *pgd = gdm ? *(uint8_t **)(gdm + 8) : NULL;
+        if (pgd)
+            *(int *)(pgd + 0xec) = no;
+        memcpy(req, data, len), memcpy(req + 4, &no, 4);
+        log_line(LOG_INFO, "join-request number %d -> %d", *(int *)(data + 4), no);
+        helper_trampoline(mgr, peer, type, req, len);
+        return;
+    }
     helper_trampoline(mgr, peer, type, data, len);
 }
 
@@ -122,8 +135,8 @@ static void hook_player_list(uint8_t *self, void *peer)
     if (me && *(int *)(ses + 0xc) == 3) {
         for (uint8_t *e = *(uint8_t **)(l + 0x70); e < *(uint8_t **)(l + 0x78); e += 0x20) {
             bool host = *(uint64_t *)e == me;
-            int no = recorded_number(*(uint64_t *)e);
-            if (no && no != *(int *)(e + 0x10)) {
+            int no = run_number_for(*(uint64_t *)e, *(int *)(e + 0x10));
+            if (no != *(int *)(e + 0x10)) {
                 log_line(LOG_INFO, "player-list number %llx %d -> %d", *(unsigned long long *)e, *(int *)(e + 0x10), no);
                 *(int *)(e + 0x10) = no;
             }
@@ -134,6 +147,28 @@ static void hook_player_list(uint8_t *self, void *peer)
         }
     }
     player_list_trampoline(self, peer);
+}
+
+// FUN_140df13d0 fills the id-to-number map at [SessionMan+0x168] (16-byte {id, no} entries, count at +0x38) from
+// the received player list.
+#define FILL_NUMBERS_RVA 0xdf13d0
+typedef void (*FillNumbers_t)(uint8_t *, void *);
+static FillNumbers_t fill_numbers_trampoline;
+
+// The joiner's session members get numbers of their own (fake host 1, self 2) while the table already holds the
+// run's; during a restore the members take the table's numbers before the world loads.
+static void hook_fill_numbers(uint8_t *ses, void *vec)
+{
+    fill_numbers_trampoline(ses, vec);
+    uint8_t *t = *(uint8_t **)(ses + 0x168), *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
+    uint8_t *pgd = gdm ? *(uint8_t **)(gdm + 8) : NULL;
+    for (uint8_t *m = restoring_mgid && t ? *(uint8_t **)(ses + 0x78) : NULL; m && m < *(uint8_t **)(ses + 0x80); m += 0xf0)
+        for (uint64_t i = 0; i < *(uint64_t *)(t + 0x38) && i < 3; i++)
+            if (*(uint64_t *)(t + 16 * i) == *(uint64_t *)(m + 0x10)) {
+                *(int *)(m + 0xd4) = *(int *)(t + 16 * i + 8);
+                if (m[0xe1] && pgd)
+                    *(int *)(pgd + 8) = *(int *)(pgd + 0xec) = *(int *)(m + 0xd4);
+            }
 }
 
 static void patch_send_helper(void)
@@ -150,6 +185,10 @@ static void patch_send_helper(void)
     // mov [rsp+8],rbx; push rsi; push rdi; push r14; sub rsp,0x30; mov r14,rdx
     static const uint8_t plist[16] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x56, 0x57, 0x41,
                                       0x56, 0x48, 0x83, 0xec, 0x30, 0x4c, 0x8b, 0xf2};
+    // mov [rsp+0x10],rdx; push rbx; push rbp; push rsi; push rdi; push r14; sub rsp,0x20
+    static const uint8_t fill[15] = {0x48, 0x89, 0x54, 0x24, 0x10, 0x53, 0x55, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83, 0xec, 0x20};
+    fill_numbers_trampoline = (FillNumbers_t)patch_prologue(FILL_NUMBERS_RVA, fill, 15, (void *)hook_fill_numbers,
+                                                            "number map prologue");
     player_list_trampoline = (PlayerList_t)patch_prologue(PLAYER_LIST_RVA, plist, 16, (void *)hook_player_list,
                                                           "player list prologue");
 }

@@ -22,6 +22,7 @@ void snapshot_restoring(uint64_t mgid, uint64_t clock)
 {
     restore_clock = clock;
     restoring_mgid = mgid;
+    load_numbers(mgid);
 }
 
 void apply_restore_clock(void)

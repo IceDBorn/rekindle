@@ -74,7 +74,7 @@ static void sub_self(uint8_t *m, size_t n)
 
 // Snapshot records: u32 ms, u8 type, u32 len, data. Type 0 with len 5 marks what follows (class, key);
 // other type-0 records start with the day clock. 0x37/0x5e are the sync stream.
-bool build_answers(const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20])
+bool build_answers(uint64_t mgid, const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20])
 {
     Buf ans = {0}, str = {0}, intro = {0};
     bool marked = false, have_box = false, have_pos = false;
@@ -138,6 +138,23 @@ bool build_answers(const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20])
         uint32_t pid = mate_pid(who[i]);
         if (pid)
             memcpy(m61 + 5 + 0x20 * i + 0xc, &pid, 4);
+    }
+    // Numbers (+8 and +0x10) from the run, so the join never seats the player on another number than the run's;
+    // a later renumbering left a stale entry that ended the run when a teammate left.
+    int cnt = mate2 ? 3 : 2, nos[3];
+    for (int i = 0; i < cnt; i++)
+        nos[i] = run_player_number(mgid, who[i]);
+    for (int i = 0; i < cnt; i++)
+        for (int no = 1; !nos[i]; no++) {
+            int k = 0;
+            while (k < cnt && nos[k] != no)
+                k++;
+            if (k == cnt)
+                nos[i] = no;
+        }
+    for (int i = 0; i < cnt; i++) {
+        m61[5 + 0x20 * i + 8] = (uint8_t)nos[i], memcpy(m61 + 5 + 0x20 * i + 0x10, &nos[i], 4);
+        note(LOG_INFO, "Auto answers number %llx=%d", (unsigned long long)who[i], nos[i]);
     }
     static const uint8_t m27[] = {0x27, 1, 0, 0, 0}, m49[] = {0x49, 0, 0, 0, 0};
     add_frames(&intro, true, 101, 0, 0, m61, mate2 ? sizeof m61 : sizeof p61);

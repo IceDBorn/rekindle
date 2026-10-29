@@ -22,7 +22,8 @@ static uint8_t *read_file(const char *path, long *n)
 struct restore_counts { int snap_day, added, skipped, bad; };
 
 // own: also apply Rekindle's own records (items, runes, enemy HP); the .state file has newer ones when present.
-static void apply_records(uint8_t *base, uint8_t *man, uint8_t *s, long n, bool own, struct restore_counts *c)
+static void apply_records(uint8_t *base, uint8_t *man, uint64_t mgid, uint8_t *s, long n, bool own,
+                          struct restore_counts *c)
 {
     for (long o = 0; o + 9 <= n;) {
         uint32_t l;
@@ -43,12 +44,35 @@ static void apply_records(uint8_t *base, uint8_t *man, uint8_t *s, long n, bool 
         if (ty == SNAP_ENEMIES && enemy_hp)
             queue_enemy_hp(d, l);
         if (ty == SNAP_NUMBERS)
-            queue_numbers(d, l);
+            queue_numbers(mgid, d, l);
         if (ty == SNAP_MAP_ITEM && restore_items) {
             int r = restore_map_item(base, man, d, l);
             c->added += r == 0, c->skipped += r == 1, c->bad += r == 2;
         }
     }
+}
+
+// The run's player numbers are needed before the join: a rejoiner's request must carry its own.
+void load_numbers(uint64_t mgid)
+{
+    char path[MAX_PATH];
+    long n = 0;
+    mod_path(path, RUN_STATE_FILE, (unsigned long long)mgid);
+    uint8_t *s = read_file(path, &n);
+    if (!s) {
+        mod_path(path, RUN_FILE, (unsigned long long)mgid);
+        s = read_file(path, &n);
+    }
+    for (long o = 0; s && o + 9 <= n;) {
+        uint32_t l;
+        memcpy(&l, s + o + 5, 4);
+        if (o + 9 + (long)l > n)
+            break;
+        if (s[o + 4] == SNAP_NUMBERS)
+            queue_numbers(mgid, s + o + 9, l);
+        o += 9 + l;
+    }
+    free(s);
 }
 
 void restore_snapshot(uint64_t mgid)
@@ -66,9 +90,9 @@ void restore_snapshot(uint64_t mgid)
     }
     uint8_t *state = read_file(state_path, &sn);
     struct restore_counts c = {-1, 0, 0, 0};
-    apply_records(base, man, s, n, !state, &c);
+    apply_records(base, man, mgid, s, n, !state, &c);
     if (state)
-        apply_records(base, man, state, sn, true, &c);
+        apply_records(base, man, mgid, state, sn, true, &c);
     free(s), free(state);
     restore_day(base, c.snap_day);
     uint8_t *session = *(uint8_t **)(base + SESSION_MAN_RVA);

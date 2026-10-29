@@ -53,7 +53,7 @@ DWORD WINAPI auto_restore(LPVOID unused)
     }
     uint64_t clock;
     uint8_t box[20];
-    bool have_box = build_answers(snapshot, n, &clock, box);
+    bool have_box = build_answers(mgid, snapshot, n, &clock, box);
     free(snapshot);
     snprintf(save, MAX_PATH, "%s\\Nightreign\\%llu\\NR0000.sl2", appdata ? appdata : "", (unsigned long long)fake_self);
     int r = plant_save(save, mgid, box, have_box);

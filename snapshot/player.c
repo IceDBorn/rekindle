@@ -68,39 +68,91 @@ struct member_no { uint64_t id; int32_t no; };
 #pragma pack(pop)
 static struct member_no run_nos[8];
 static int run_no_count;
+static uint64_t run_nos_mgid;
 
-// Session members (SessionMan +0x78, stride 0xf0, id +0x10, number +0xd4) hold the run's numbers on host and guest.
+static bool restored_run(void)
+{
+    return run_nos_mgid && run_nos_mgid == run_mgid;
+}
+
+int recorded_number(uint64_t id)
+{
+    for (int i = 0; restored_run() && i < run_no_count; i++)
+        if (run_nos[i].id == id)
+            return run_nos[i].no;
+    return 0;
+}
+
+// A player missing from the record keeps its number unless a recorded player holds it; two players on one
+// number end the run when either leaves.
+int run_number_for(uint64_t id, int current)
+{
+    int no = recorded_number(id);
+    if (no || !restored_run())
+        return no ? no : current;
+    for (int i = 0; i < run_no_count; i++)
+        if (run_nos[i].no == current) {
+            for (no = 1;; no++) {
+                int k = 0;
+                while (k < run_no_count && run_nos[k].no != no)
+                    k++;
+                if (k == run_no_count)
+                    return no;
+            }
+        }
+    return current;
+}
+
+// Session members (SessionMan +0x78, stride 0xf0, id +0x10, number +0xd4). In a restored run the record stays the
+// truth, so a snapshot taken while a teammate is away keeps their number.
 void take_numbers(uint8_t *base)
 {
     uint8_t *ses = *(uint8_t **)(base + SESSION_MAN_RVA);
     struct member_no out[8];
     int n = 0;
     for (uint8_t *m = ses ? *(uint8_t **)(ses + 0x78) : NULL, *end = ses ? *(uint8_t **)(ses + 0x80) : NULL;
-         m && m < end && n < 8; m += 0xf0)
-        if (*(int *)(m + 0xd4) > 0) {
-            out[n++] = (struct member_no){*(uint64_t *)(m + 0x10), *(int *)(m + 0xd4)};
-            log_line(LOG_DEBUG, "number %llx=%d self=%d", (unsigned long long)out[n - 1].id, out[n - 1].no, m[0xe1]);
-        }
+         m && m < end && n < 8; m += 0xf0) {
+        uint64_t id = *(uint64_t *)(m + 0x10);
+        int cur = *(int *)(m + 0xd4);
+        if (cur <= 0)
+            continue;
+        log_line(LOG_DEBUG, "number %llx=%d self=%d", (unsigned long long)id, cur, m[0xe1]);
+        if (!restored_run())
+            out[n++] = (struct member_no){id, cur};
+        else if (!recorded_number(id) && run_no_count < 8)
+            run_nos[run_no_count] = (struct member_no){id, run_number_for(id, cur)}, run_no_count++;
+    }
+    if (restored_run())
+        memcpy(out, run_nos, run_no_count * sizeof *out), n = run_no_count;
     if (n)
         snap_write(SNAP_NUMBERS, (uint8_t *)out, n * (int)sizeof *out);
 }
 
-void queue_numbers(const uint8_t *d, uint32_t l)
+void queue_numbers(uint64_t mgid, const uint8_t *d, uint32_t l)
 {
     if (l % sizeof(struct member_no))
         return;
+    run_nos_mgid = mgid;
     run_no_count = (int)(l / sizeof(struct member_no)) < 8 ? (int)(l / sizeof(struct member_no)) : 8;
     memcpy(run_nos, d, run_no_count * sizeof *run_nos);
     for (int i = 0; i < run_no_count; i++)
         log_line(LOG_INFO, "numbers-restore %llx=%d", (unsigned long long)run_nos[i].id, run_nos[i].no);
 }
 
-int recorded_number(uint64_t id)
+int run_player_number(uint64_t mgid, uint64_t id)
 {
-    for (int i = 0; i < run_no_count; i++)
+    if (run_nos_mgid != mgid)
+        load_numbers(mgid);
+    for (int i = 0; run_nos_mgid == mgid && i < run_no_count; i++)
         if (run_nos[i].id == id)
             return run_nos[i].no;
     return 0;
+}
+
+// The session can be empty while the rejoin request is built, so the save folder's id is used.
+int own_recorded_number(void)
+{
+    return recorded_number(fake_self);
 }
 
 static int run_number(uint8_t *base, uint64_t self)
@@ -130,6 +182,8 @@ void restore_player_number(uint8_t *base, uint8_t *session)
         log_line(LOG_WARN, "player-number was=%d, not in the player list, kept", was);
         return;
     }
+    if (pgd)
+        *(int *)(pgd + 0xec) = no;
     if (!pgd || !player || was == no)
         return;
     ((SetPlayerNo_t)(base + 0x66f2d0))(player, no);
