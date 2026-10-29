@@ -45,11 +45,12 @@ LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep)
         ADD(" %llx/%llx", (unsigned long long)regs[i], (unsigned long long)(vt - base < size ? vt - base : 0));
     }
     ADD(" stack:");
+    // Stop at the end of the committed stack region; reading past the stack top faults inside this handler.
     uintptr_t *sp = (uintptr_t *)c->Rsp;
-    for (int i = 0, k = 0; i < 0x300 && k < 24; i++) {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (!(i & 0x1ff) && (!VirtualQuery(sp + i, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT))
-            break;
+    MEMORY_BASIC_INFORMATION mbi;
+    int words = VirtualQuery(sp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT
+                    ? (int)(((uintptr_t)mbi.BaseAddress + mbi.RegionSize - (uintptr_t)sp) / 8) : 0;
+    for (int i = 0, k = 0; i < 0x300 && i < words && k < 24; i++) {
         if (sp[i] - base < size)
             ADD(" 0x%llx", (unsigned long long)(sp[i] - base)), k++;
     }

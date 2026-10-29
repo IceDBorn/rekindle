@@ -10,6 +10,7 @@ struct enemy_hp { uint64_t handle; int32_t npc, hp, max; };
 static struct enemy_hp pending_hp[512];
 static int pending_hp_count;
 static uint64_t pending_hp_until;
+static bool pending_missed[512];
 
 static int32_t *enemy_hp_of(uint8_t *chr)
 {
@@ -40,6 +41,7 @@ void queue_enemy_hp(const uint8_t *d, uint32_t l)
         return;
     pending_hp_count = (int)(l / sizeof(struct enemy_hp)) < 512 ? (int)(l / sizeof(struct enemy_hp)) : 512;
     memcpy(pending_hp, d, pending_hp_count * sizeof(struct enemy_hp));
+    memset(pending_missed, 0, sizeof pending_missed);
     pending_hp_until = unix_ms() + 300000;
 }
 
@@ -55,13 +57,23 @@ void restore_enemies(uint8_t *base, uint64_t now)
         uint64_t h = *(uint64_t *)(*c + 8);
         for (int i = 0; i < pending_hp_count; i++) {
             struct enemy_hp *e = &pending_hp[i];
-            int32_t *hp = e->handle == h && e->npc == *(int32_t *)(*c + 0x68) ? enemy_hp_of(*c) : NULL;
-            if (!hp || hp[1] != e->max || hp[0] <= 0)
+            if (e->npc != *(int32_t *)(*c + 0x68))
                 continue;
-            log_line(LOG_INFO, "enemy-restore handle=%016llx npc=%d hp=%d->%d/%d", (unsigned long long)h, e->npc,
-                     hp[0], e->hp < hp[0] ? e->hp : hp[0], hp[1]);
-            if (e->hp < hp[0])
-                hp[0] = e->hp;
+            int32_t *hp = enemy_hp_of(*c);
+            if (e->handle != h || !hp || hp[0] <= 0 || hp[1] <= 0) {
+                if (!pending_missed[i] && hp)
+                    pending_missed[i] = true, log_line(LOG_DEBUG, "enemy-restore miss npc=%d handle=%016llx/%016llx max=%d/%d",
+                                                       e->npc, (unsigned long long)h, (unsigned long long)e->handle, hp[1], e->max);
+                continue;
+            }
+            // Max HP scales with the player count, so the saved share of it goes back.
+            int32_t want = e->max > 0 ? (int32_t)((int64_t)e->hp * hp[1] / e->max) : e->hp;
+            want = want < 1 ? 1 : want;
+            log_line(LOG_INFO, "enemy-restore handle=%016llx npc=%d hp=%d->%d/%d (saved %d/%d)", (unsigned long long)h,
+                     e->npc, hp[0], want < hp[0] ? want : hp[0], hp[1], e->hp, e->max);
+            if (want < hp[0])
+                hp[0] = want;
+            pending_missed[i] = pending_missed[pending_hp_count - 1];
             pending_hp[i--] = pending_hp[--pending_hp_count];
         }
     }

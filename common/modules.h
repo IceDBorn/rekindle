@@ -5,6 +5,8 @@
 
 // run_marker.c: multi_game_id of the run in progress, 0 outside a run.
 extern uint64_t run_mgid;
+// run_marker.c: the run is over; drops the marker and the mate list.
+void clear_marker(const char *why);
 
 // snapshot/main.c: reads the settings and waits for Steam networking on its own thread.
 void snapshot_start(void);

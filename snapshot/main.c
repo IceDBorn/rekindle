@@ -6,7 +6,7 @@ typedef int32_t HSteamUser;
 typedef HSteamUser (*GetHSteamUser_t)(void);
 typedef void *(*FindOrCreateUserInterface_t)(HSteamUser, const char *);
 
-uint64_t first_snapshot_ms = 10000, snapshot_every_ms = 30000, resume_snapshots_ms = 60000;
+uint64_t first_snapshot_ms = 10000, snapshot_every_ms = 30000, resume_snapshots_ms = 60000, stop_before_boss_ms = 60000;
 bool restore_items = true, restore_runes = true, boss_drops = true, graces = true, enemy_hp = true;
 
 // Checks the run marker once a second: a new run gets its first snapshot first_snapshot_ms after the
@@ -30,14 +30,15 @@ static void load_settings(void)
     first_snapshot_ms = cfg("snapshots", "first_after_s", 10) * 1000ull;
     snapshot_every_ms = cfg("snapshots", "every_s", 30) * 1000ull;
     resume_snapshots_ms = cfg("snapshots", "resume_after_restore_s", 60) * 1000ull;
+    stop_before_boss_ms = cfg("snapshots", "stop_before_boss_s", 60) * 1000ull;
     restore_items = cfg("restore", "restore_ground_items", 1);
     restore_runes = cfg("restore", "restore_runes", 1);
     boss_drops = cfg("restore", "fix_boss_drops", 1);
     graces = cfg("restore", "fix_graces", 1);
     enemy_hp = cfg("restore", "restore_enemy_hp", 1);
-    log_line(LOG_INFO, "settings first=%llu every=%llu resume=%llu items=%d runes=%d drops=%d graces=%d enemy_hp=%d",
+    log_line(LOG_INFO, "settings first=%llu every=%llu resume=%llu boss=%llu items=%d runes=%d drops=%d graces=%d enemy_hp=%d",
              (unsigned long long)first_snapshot_ms, (unsigned long long)snapshot_every_ms,
-             (unsigned long long)resume_snapshots_ms, restore_items, restore_runes, boss_drops, graces, enemy_hp);
+             (unsigned long long)resume_snapshots_ms, (unsigned long long)stop_before_boss_ms, restore_items, restore_runes, boss_drops, graces, enemy_hp);
 }
 
 // Waits until Steam has a user and its networking interface, then patches the game.

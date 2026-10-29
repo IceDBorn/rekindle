@@ -166,6 +166,10 @@ static void emu_echo(const uint8_t *msg, size_t n)
     for (int i = 0; i < 8; i++)
         f[i] = (uint8_t)(fake_self >> (56 - 8 * i)), t[i] = (uint8_t)(fake_host >> (56 - 8 * i));
     swap_bytes(b + 7, n, f, t, 8);
+    // 0x60 starts with the sender's server player_id.
+    uint32_t pid = mate_pid(fake_host);
+    if (msg[0] == 0x60 && n >= 5 && pid)
+        memcpy(b + 8, &pid, 4);
     int k = snprintf((char *)fs, sizeof fs, "%llu", (unsigned long long)fake_self);
     if (k == snprintf((char *)ts, sizeof ts, "%llu", (unsigned long long)fake_host)) {
         swap_bytes(b + 7, n, fs, ts, k);

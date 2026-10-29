@@ -13,7 +13,7 @@
 typedef void *(*Ctor_t)(void *obj);
 
 // main.c: snapshot timing and restore switches from rekindle.ini.
-extern uint64_t first_snapshot_ms, snapshot_every_ms, resume_snapshots_ms;
+extern uint64_t first_snapshot_ms, snapshot_every_ms, resume_snapshots_ms, stop_before_boss_ms;
 extern bool restore_items, restore_runes, boss_drops, graces, enemy_hp;
 
 // snapshot.c: what the game sends the fake peer while a snapshot is taken goes to the run file.
@@ -32,6 +32,10 @@ extern uint64_t restoring_mgid;
 void snap_clock(uint8_t *base);
 void apply_restore_clock(void);
 void restore_day(uint8_t *base, int day);
+bool boss_phase(uint8_t *base);
+int64_t boss_eta_ms(uint8_t *base, uint64_t now);
+void world_probe(uint8_t *base);
+uint32_t player_tile(uint8_t *base);
 
 // map_items.c, player.c, graces.c, enemies.c
 extern const int item_heads[5];
@@ -40,7 +44,10 @@ int restore_map_item(uint8_t *base, uint8_t *man, uint8_t *d, uint32_t l);
 void take_position(uint8_t *base);
 void take_player(uint8_t *base);
 void restore_player(uint8_t *base, const int32_t v[3]);
-void become_player_one(uint8_t *base, uint8_t *session);
+void restore_player_number(uint8_t *base, uint8_t *session);
+void take_numbers(uint8_t *base);
+void queue_numbers(const uint8_t *d, uint32_t l);
+int recorded_number(uint64_t id);
 void fix_graces(uint8_t *base);
 void take_enemies(uint8_t *base);
 void queue_enemy_hp(const uint8_t *d, uint32_t l);

@@ -4,6 +4,8 @@
 #define INI_FILE "rekindle.ini"
 #define RUN_FILE "rekindle_run_%llu.bin"
 #define RUN_TMP_FILE "rekindle_run.tmp"
+#define RUN_STATE_FILE "rekindle_run_%llu.state"
+#define RUN_STATE_TMP_FILE "rekindle_run_state.tmp"
 #define ACTIVE_RUN_FILE "rekindle_active_run.txt"
 #define MATES_FILE "rekindle_mates.txt"
 
@@ -13,3 +15,4 @@
 #define SNAP_POSITION 0xf2
 #define SNAP_PLAYER 0xf3
 #define SNAP_ENEMIES 0xf4
+#define SNAP_NUMBERS 0xf5

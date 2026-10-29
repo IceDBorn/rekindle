@@ -2,6 +2,7 @@
 // and what the game sends that peer is captured. Runs from the sync manager update on the game thread.
 #include "snapshot.h"
 #include "patch.h"
+#include <stdio.h>
 #include <string.h>
 
 #define SEND_HELPER_RVA 0xdf2380
@@ -13,8 +14,11 @@ static uint8_t fake_peer_obj[0x1000];
 uint64_t fake_peer = (uint64_t)(uintptr_t)fake_peer_obj;
 static uint32_t snap_ids[512];
 static int snap_id_count, snap_stream_count;
+static bool snap_guest;
 static uint64_t snap_start_ms;
 static HANDLE snap_file = INVALID_HANDLE_VALUE;
+// Rekindle's own records also go to rekindle_run_<mgid>.state at once, so a quit while streaming keeps them.
+static HANDLE state_file = INVALID_HANDLE_VALUE;
 static __thread bool in_snapshot;
 // Auto snapshots go to a temp file and are renamed to rekindle_run_<multi_game_id>.bin when complete.
 uint64_t snap_mgid, done_mgid;
@@ -36,6 +40,8 @@ void snap_write(uint32_t type, const uint8_t *data, int len)
     snap_stream_count += type == 0x37 || type == 0x5e;
     WriteFile(snap_file, hdr, sizeof hdr, &w, NULL);
     WriteFile(snap_file, data, l, &w, NULL);
+    if (state_file != INVALID_HANDLE_VALUE && type >= SNAP_MAP_ITEM && type <= SNAP_NUMBERS)
+        WriteFile(state_file, hdr, sizeof hdr, &w, NULL), WriteFile(state_file, data, l, &w, NULL);
     LeaveCriticalSection(&log_lock);
 }
 
@@ -48,6 +54,27 @@ void snap_mark(uint8_t kind, uint32_t id)
     snap_write(0, rec, sizeof rec);
 }
 
+// PROBE: logs game sends to real peers, each type up to 6 times per peer pointer.
+static void probe_send(const char *how, uint64_t peer, uint32_t type, const uint8_t *data, int len)
+{
+    static uint64_t peers[8];
+    static uint8_t seen[8][256];
+    if (log_level < LOG_DEBUG || !data)
+        return;
+    int i = 0;
+    while (i < 8 && peers[i] && peers[i] != peer)
+        i++;
+    if (i == 8)
+        return;
+    peers[i] = peer;
+    if (seen[i][type & 0xff]++ >= 6)
+        return;
+    char hex[3 * 112 + 1] = "";
+    for (int k = 0; k < len && k < 112; k++)
+        snprintf(hex + 3 * k, 4, "%02x ", data[k]);
+    log_line(LOG_DEBUG, "Probe %s peer=%llx type=%02x len=%d %s", how, (unsigned long long)peer, type, len, hex);
+}
+
 static void hook_send_helper(void *mgr, uint64_t *peer, uint32_t type, const uint8_t *data, int len)
 {
     if (peer && *peer == fake_peer) {
@@ -56,6 +83,7 @@ static void hook_send_helper(void *mgr, uint64_t *peer, uint32_t type, const uin
         snap_write(type, data, len);
         return;
     }
+    probe_send("send", peer ? *peer : 0, type, data, len);
     helper_trampoline(mgr, peer, type, data, len);
 }
 
@@ -71,7 +99,41 @@ static void hook_broadcast(void *mgr, uint32_t type, const uint8_t *data, int le
         snap_write(type, data, len);
         return;
     }
+    probe_send("bcast", 0, type, data, len);
     broadcast_trampoline(mgr, type, data, len);
+}
+
+// The player list FUN_140b5d2e0 sends as 0x61 (0x20-byte entries at [[this+0xa8]+0x70]: id, slot, player_id, number,
+// flags at +0x18, host at +0x19). A restored host got it from the fake host, which stays marked host after leaving.
+#define PLAYER_LIST_RVA 0xb5d2e0
+typedef void (*PlayerList_t)(uint8_t *, void *);
+static PlayerList_t player_list_trampoline;
+
+static void hook_player_list(uint8_t *self, void *peer)
+{
+    uint8_t *ses = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + SESSION_MAN_RVA), *l = *(uint8_t **)(self + 0xa8);
+    uint64_t me = 0;
+    for (uint8_t *m = ses ? *(uint8_t **)(ses + 0x78) : NULL, *end = ses ? *(uint8_t **)(ses + 0x80) : NULL; m && m < end;
+         m += 0xf0)
+        if (m[0xe1])
+            me = *(uint64_t *)(m + 0x10);
+    // A joiner's request (FUN_140b4f560) must match its id, player_id and number from the run. The list came
+    // from the fake host, so a snapshot taken as guest can hold wrong numbers; the recorded ones replace them.
+    if (me && *(int *)(ses + 0xc) == 3) {
+        for (uint8_t *e = *(uint8_t **)(l + 0x70); e < *(uint8_t **)(l + 0x78); e += 0x20) {
+            bool host = *(uint64_t *)e == me;
+            int no = recorded_number(*(uint64_t *)e);
+            if (no && no != *(int *)(e + 0x10)) {
+                log_line(LOG_INFO, "player-list number %llx %d -> %d", *(unsigned long long *)e, *(int *)(e + 0x10), no);
+                *(int *)(e + 0x10) = no;
+            }
+            if (e[0x19] != host)
+                log_line(LOG_INFO, "player-list host %llx -> %d (pid=%d no=%d)", *(unsigned long long *)e, host,
+                         *(int *)(e + 0xc), *(int *)(e + 0x10));
+            e[0x19] = host;
+        }
+    }
+    player_list_trampoline(self, peer);
 }
 
 static void patch_send_helper(void)
@@ -85,6 +147,11 @@ static void patch_send_helper(void)
                                                      "send helper prologue");
     broadcast_trampoline = (Broadcast_t)patch_prologue(BROADCAST_RVA, bcast, 16, (void *)hook_broadcast,
                                                        "broadcast prologue");
+    // mov [rsp+8],rbx; push rsi; push rdi; push r14; sub rsp,0x30; mov r14,rdx
+    static const uint8_t plist[16] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x56, 0x57, 0x41,
+                                      0x56, 0x48, 0x83, 0xec, 0x30, 0x4c, 0x8b, 0xf2};
+    player_list_trampoline = (PlayerList_t)patch_prologue(PLAYER_LIST_RVA, plist, 16, (void *)hook_player_list,
+                                                          "player list prologue");
 }
 
 // Walks the MSVC std::set<u32> at [[session+0x30]+0x20] that FUN_140df0af0 checks ids against.
@@ -164,8 +231,12 @@ static void collect_world_ids(void)
 static void take_snapshot(void)
 {
     uint64_t now = unix_ms();
-    collect_live_ids();
-    if (!snap_id_count)
+    uint8_t *ses = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + SESSION_MAN_RVA);
+    bool guest = ses && *(int *)(ses + 0xc) == 6;
+    // A guest's live id set holds only the few characters it syncs; dead enemies need their 0x43 too.
+    if (!guest)
+        collect_live_ids();
+    if (guest || !snap_id_count)
         collect_world_ids();
     log_line(LOG_DEBUG, "snapshot-start ms=%llu ids=%d", (unsigned long long)now, snap_id_count);
     if (!snap_id_count)
@@ -179,6 +250,7 @@ static void take_snapshot(void)
     snap_start_ms = now;
     snap_mgid = 0;
     snap_stream_count = 0;
+    snap_guest = guest;
     LeaveCriticalSection(&log_lock);
     if (old != INVALID_HANDLE_VALUE)
         CloseHandle(old);
@@ -195,10 +267,25 @@ static void take_snapshot(void)
         build(scratch, &peer, &id);
     }
     snap_mark(0xff, 0);
+    char state_tmp[MAX_PATH], state[MAX_PATH];
+    mod_path(state_tmp, RUN_STATE_TMP_FILE);
+    f = CreateFileA(state_tmp, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    EnterCriticalSection(&log_lock);
+    state_file = f;
+    LeaveCriticalSection(&log_lock);
     take_map_items(base);
     take_position(base);
     take_player(base);
     take_enemies(base);
+    take_numbers(base);
+    EnterCriticalSection(&log_lock);
+    state_file = INVALID_HANDLE_VALUE;
+    LeaveCriticalSection(&log_lock);
+    if (f != INVALID_HANDLE_VALUE)
+        CloseHandle(f);
+    mod_path(state, RUN_STATE_FILE, (unsigned long long)snap_mgid);
+    if (!snap_mgid || !MoveFileExA(state_tmp, state, MOVEFILE_REPLACE_EXISTING))
+        DeleteFileA(state_tmp);
     in_snapshot = false;
 }
 
@@ -260,13 +347,15 @@ static void finish_snapshot(void)
     char tmp[MAX_PATH], dst[MAX_PATH];
     mod_path(tmp, RUN_TMP_FILE);
     mod_path(dst, RUN_FILE, (unsigned long long)snap_mgid);
-    // Without 0x37/0x5e (world not loaded yet) the fake host never finishes, so keep the older snapshot.
-    if (!snap_mgid || !snap_stream_count || !MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING))
+    // On a host, no 0x37/0x5e means the world is not loaded yet, so the older snapshot stays. A guest streams
+    // nothing (it has no sync objects for characters it does not own); the fake host leaves after the 0x42 burst.
+    bool ok = snap_mgid && (snap_stream_count || snap_guest);
+    if (!ok || !MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING))
         DeleteFileA(tmp);
     else
         done_mgid = snap_mgid;
-    log_line(snap_mgid && snap_stream_count ? LOG_INFO : LOG_DEBUG, "auto-snapshot mgid=%llu stream=%d",
-             (unsigned long long)snap_mgid, snap_stream_count);
+    log_line(ok ? LOG_INFO : LOG_DEBUG, "auto-snapshot mgid=%llu stream=%d guest=%d", (unsigned long long)snap_mgid,
+             snap_stream_count, snap_guest);
 }
 
 static void hook_sync_update(void *mgr, float dt)
@@ -281,12 +370,26 @@ static void hook_sync_update(void *mgr, float dt)
     // Ground items go back once the fake host is gone (session state no longer 6, guest).
     static bool items_restored;
     uint8_t *ses = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + SESSION_MAN_RVA);
+    // A new run started instead of the restore; its marker stays.
+    if (restoring_mgid && run_mgid && run_mgid != restoring_mgid) {
+        log_line(LOG_INFO, "restore mgid=%llu dropped, new run %llu", (unsigned long long)restoring_mgid,
+                 (unsigned long long)run_mgid);
+        restoring_mgid = 0;
+    }
     if (restoring_mgid && !items_restored && now - first_tick_ms > 10000 && ses && *(int *)(ses + 0xc) != 6) {
         items_restored = true;
-        if (boss_drops)
-            become_player_one((uint8_t *)GetModuleHandleA(NULL), ses);
-        restore_snapshot(restoring_mgid);
-        relay_ready();
+        // No session in the Roundtable: the run ended while this player was away, so the game did not rejoin it.
+        uint8_t *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
+        if (!*(int *)(ses + 0xc) && gdm && gdm[0xdc] == 1) {
+            log_line(LOG_INFO, "restore mgid=%llu ended in the Roundtable", (unsigned long long)restoring_mgid);
+            restoring_mgid = 0;
+            clear_marker("run gone");
+        } else {
+            restore_snapshot(restoring_mgid);
+            if (boss_drops)
+                restore_player_number((uint8_t *)GetModuleHandleA(NULL), ses);
+            relay_ready();
+        }
     }
     static uint64_t last_grace_ms;
     if (graces && items_restored && now - last_grace_ms > 1000)
@@ -297,7 +400,24 @@ static void hook_sync_update(void *mgr, float dt)
         apply_restore_clock();
     if (!streaming && helper_trampoline) {
         bool early = run_request && InterlockedExchange(&run_request, 0);
-        if ((early || now - last_auto_ms > snapshot_every_ms) && !restoring_mgid) {
+        // No snapshots in the Roundtable (mode byte 1 outside a run; guests in a run have it too).
+        uint8_t *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
+        bool hub = gdm && gdm[0xdc] == 1 && !run_mgid;
+        static bool boss;
+        static uint64_t last_probe_ms;
+        uint8_t *gb = (uint8_t *)GetModuleHandleA(NULL);
+        if (now - last_probe_ms > 1000)
+            last_probe_ms = now, world_probe(gb);
+        // A restore lands before the boss phase with stop_before_boss_ms left for the teammates to join.
+        int64_t eta = boss_eta_ms(gb, now);
+        bool phase = boss_phase(gb), b = phase || (eta >= 0 && (uint64_t)eta < stop_before_boss_ms);
+        // The first snapshot after a boss phase (the next day) runs at once.
+        if (b != boss && !b)
+            last_auto_ms = 0;
+        if (b != boss)
+            boss = b, log_line(LOG_INFO, !b ? "snapshots resumed" : phase ? "snapshots paused, boss phase"
+                                                     : "snapshots paused, boss in %lld s", (long long)eta / 1000);
+        if ((early || now - last_auto_ms > snapshot_every_ms) && !restoring_mgid && !hub && !boss) {
             last_auto_ms = unix_ms();
             take_snapshot();
             streaming = snap_id_count > 0;

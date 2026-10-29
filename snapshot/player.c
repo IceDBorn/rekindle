@@ -25,6 +25,15 @@ void take_position(uint8_t *base)
     log_line(LOG_INFO, "position src=%d tile=%08x", src, src ? *(uint32_t *)out : 0);
 }
 
+uint32_t player_tile(uint8_t *base)
+{
+    uint8_t *wcm = *(uint8_t **)(base + WORLD_CHR_MAN_RVA), *pl = wcm ? *(uint8_t **)(wcm + 0x174e8) : NULL;
+    uint32_t tile = 0xffffffff;
+    if (pl && *(void **)(pl + 0x5f0))
+        ((ChrGet_t)(base + 0x66b700))(pl, &tile);
+    return tile;
+}
+
 // Level and runes (PlayerGameData +0x68 level, +0x6c held runes, +0x110 runes gained). The save can be older
 // than the snapshot, so a restore gives back runes earned after the game last wrote it.
 void take_player(uint8_t *base)
@@ -48,23 +57,84 @@ void restore_player(uint8_t *base, const int32_t v[3])
         *runes += v[2] - *gained, *gained = v[2];
 }
 
-// A restored player keeps the session player number 2 it got from the fake host (player 1), and only sees
-// ground items targeted at its own number. The game's leave path resets it with FUN_14066f2d0(PlayerIns, 1).
+// A restored player gets its session player number from the fake host, and only sees ground items targeted at
+// its own number. The run's number is in the player list (NetMan +0x68, list at +0xa8, see hook_player_list);
+// two players on one number end the run when either leaves. FUN_14066f2d0(PlayerIns, no) sets it.
 typedef void (*SetPlayerNo_t)(void *player, int no);
 typedef char (*ItemVisible_t)(void *rec);
 
-void become_player_one(uint8_t *base, uint8_t *session)
+#pragma pack(push, 1)
+struct member_no { uint64_t id; int32_t no; };
+#pragma pack(pop)
+static struct member_no run_nos[8];
+static int run_no_count;
+
+// Session members (SessionMan +0x78, stride 0xf0, id +0x10, number +0xd4) hold the run's numbers on host and guest.
+void take_numbers(uint8_t *base)
+{
+    uint8_t *ses = *(uint8_t **)(base + SESSION_MAN_RVA);
+    struct member_no out[8];
+    int n = 0;
+    for (uint8_t *m = ses ? *(uint8_t **)(ses + 0x78) : NULL, *end = ses ? *(uint8_t **)(ses + 0x80) : NULL;
+         m && m < end && n < 8; m += 0xf0)
+        if (*(int *)(m + 0xd4) > 0) {
+            out[n++] = (struct member_no){*(uint64_t *)(m + 0x10), *(int *)(m + 0xd4)};
+            log_line(LOG_DEBUG, "number %llx=%d self=%d", (unsigned long long)out[n - 1].id, out[n - 1].no, m[0xe1]);
+        }
+    if (n)
+        snap_write(SNAP_NUMBERS, (uint8_t *)out, n * (int)sizeof *out);
+}
+
+void queue_numbers(const uint8_t *d, uint32_t l)
+{
+    if (l % sizeof(struct member_no))
+        return;
+    run_no_count = (int)(l / sizeof(struct member_no)) < 8 ? (int)(l / sizeof(struct member_no)) : 8;
+    memcpy(run_nos, d, run_no_count * sizeof *run_nos);
+    for (int i = 0; i < run_no_count; i++)
+        log_line(LOG_INFO, "numbers-restore %llx=%d", (unsigned long long)run_nos[i].id, run_nos[i].no);
+}
+
+int recorded_number(uint64_t id)
+{
+    for (int i = 0; i < run_no_count; i++)
+        if (run_nos[i].id == id)
+            return run_nos[i].no;
+    return 0;
+}
+
+static int run_number(uint8_t *base, uint64_t self)
+{
+    if (recorded_number(self))
+        return recorded_number(self);
+    uint8_t *net = *(uint8_t **)(base + NET_MAN_RVA), *obj = net ? *(uint8_t **)(net + 0x68) : NULL;
+    uint8_t *l = obj ? *(uint8_t **)(obj + 0xa8) : NULL;
+    for (uint8_t *e = l ? *(uint8_t **)(l + 0x70) : NULL; e && e < *(uint8_t **)(l + 0x78); e += 0x20)
+        if (*(uint64_t *)e == self)
+            return *(int *)(e + 0x10);
+    return 0;
+}
+
+void restore_player_number(uint8_t *base, uint8_t *session)
 {
     uint8_t *gdm = *(uint8_t **)(base + GAME_DATA_MAN_RVA), *pgd = gdm ? *(uint8_t **)(gdm + 8) : NULL;
     uint8_t *wcm = *(uint8_t **)(base + WORLD_CHR_MAN_RVA), *player = wcm ? *(uint8_t **)(wcm + 0x174e8) : NULL;
-    int was = pgd ? *(int *)(pgd + 8) : -1;
-    if (!pgd || !player || was == 1)
-        return;
-    ((SetPlayerNo_t)(base + 0x66f2d0))(player, 1);
-    // The self member entry (+0xe1 set) keeps its number at +0xd4 for the number allocator.
+    int was = pgd ? *(int *)(pgd + 8) : -1, no = 0;
+    uint8_t *self = NULL;
     for (uint8_t *m = *(uint8_t **)(session + 0x78), *end = *(uint8_t **)(session + 0x80); m && m < end; m += 0xf0)
         if (m[0xe1])
-            *(int *)(m + 0xd4) = 1;
+            self = m;
+    if (self)
+        no = run_number(base, *(uint64_t *)(self + 0x10));
+    if (!no) {
+        log_line(LOG_WARN, "player-number was=%d, not in the player list, kept", was);
+        return;
+    }
+    if (!pgd || !player || was == no)
+        return;
+    ((SetPlayerNo_t)(base + 0x66f2d0))(player, no);
+    // The self member entry keeps its number at +0xd4 for the number allocator.
+    *(int *)(self + 0xd4) = no;
     // Items already on the ground got no visual; +0xf8 makes the manager update retry it.
     uint8_t *man = *(uint8_t **)(base + MAP_ITEM_MAN_RVA);
     int shown = 0;

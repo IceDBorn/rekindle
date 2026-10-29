@@ -13,14 +13,32 @@ void *alloc_near(uint8_t *base)
     return NULL;
 }
 
+bool readable(const void *p, size_t n)
+{
+    for (uintptr_t a = (uintptr_t)p, end = a + n; a < end;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery((void *)a, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT ||
+            (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || !mbi.Protect)
+            return false;
+        a = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+    }
+    return true;
+}
+
+bool bytes_match(const void *p, const void *expect, size_t n)
+{
+    return readable(p, n) && !memcmp(p, expect, n);
+}
+
 // Points the call rel32 at call_rva to hook through a stub near the image, if it still calls fn_rva.
 bool patch_call(uint32_t call_rva, uint32_t fn_rva, void *hook, const char *name)
 {
     uint8_t *base = (uint8_t *)GetModuleHandleA(NULL);
     uint8_t *call = base + call_rva;
-    int32_t rel;
-    memcpy(&rel, call + 1, 4);
-    if (call[0] != 0xe8 || call + 5 + rel != base + fn_rva) {
+    int32_t rel = 0;
+    if (readable(call, 5))
+        memcpy(&rel, call + 1, 4);
+    if (!readable(call, 5) || call[0] != 0xe8 || call + 5 + rel != base + fn_rva) {
         log_mismatch(call, name);
         return false;
     }
@@ -44,7 +62,7 @@ bool patch_call(uint32_t call_rva, uint32_t fn_rva, void *hook, const char *name
 void *patch_prologue(uint32_t rva, const uint8_t *expect, int n, void *target, const char *name)
 {
     uint8_t *fn = (uint8_t *)GetModuleHandleA(NULL) + rva;
-    if (memcmp(fn, expect, n)) {
+    if (!bytes_match(fn, expect, n)) {
         log_mismatch(fn, name);
         return NULL;
     }
@@ -72,7 +90,7 @@ bool patch_bytes(uintptr_t at, const uint8_t *old_b, const uint8_t *new_b, size_
 {
     uint8_t *p = (uint8_t *)at;
     DWORD old;
-    if (memcmp(p, old_b, n) || !VirtualProtect(p, n, PAGE_EXECUTE_READWRITE, &old))
+    if (!bytes_match(p, old_b, n) || !VirtualProtect(p, n, PAGE_EXECUTE_READWRITE, &old))
         return false;
     memcpy(p, new_b, n);
     VirtualProtect(p, n, old, &old);

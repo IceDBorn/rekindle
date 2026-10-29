@@ -75,6 +75,9 @@ DWORD WINAPI ping_thread(LPVOID unused);
 
 // run_marker.c: the run in progress and its lobby mates.
 extern uint64_t run_mates[3], run_lobby;
+extern uint32_t self_pid, run_pids[3];
+uint32_t mate_pid(uint64_t id);
+uint32_t peer_pid(uint64_t id);
 void run_marker_http(const void *data, size_t n);
 void note_mate(uint64_t id, uint64_t lobby);
 void save_mates(void);

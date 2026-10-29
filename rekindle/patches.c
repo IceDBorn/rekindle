@@ -46,7 +46,7 @@ static bool patch_reason(uintptr_t at, const uint8_t code[10], bool on)
 {
     uint8_t *p = (uint8_t *)at;
     DWORD old;
-    if (memcmp(p, code, 10) || !VirtualProtect(p + 10, 1, PAGE_EXECUTE_READWRITE, &old))
+    if (!bytes_match(p, code, 10) || !VirtualProtect(p + 10, 1, PAGE_EXECUTE_READWRITE, &old))
         return false;
     p[10] = on ? 0 : 1;
     VirtualProtect(p + 10, 1, old, &old);

@@ -23,7 +23,10 @@ void log_init(const char *file)
         if (!_stricmp(v, level_names[i]))
             log_level = i;
     mod_path(log_path, "%s", file);
-    DeleteFileA(log_path);
+    // The last session's log survives one relaunch, so a crash log is not lost to an immediate restart.
+    char prev[MAX_PATH + 8];
+    snprintf(prev, sizeof prev, "%s.prev", log_path);
+    MoveFileExA(log_path, prev, MOVEFILE_REPLACE_EXISTING);
 }
 
 // Takes the lock and writes the line prefix; returns NULL with the lock released when nothing is logged.

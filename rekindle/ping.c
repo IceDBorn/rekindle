@@ -1,6 +1,7 @@
 // Ping and packet loss next to teammate names. Rekindle peers echo small pings on their own P2P channel;
 // loss comes from gaps in the plaintext wire seq of the game's encrypted frames on channel 30.
 #include "rekindle.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
@@ -24,6 +25,7 @@ struct peer {
     uint16_t seq_next, seq_start;
     bool seq_on;
     wchar_t name[64], game_name[18], extra[32];
+    uint32_t pid;
 };
 
 // Ping packet: "RKP", type (1 ping, 2 pong), u32 seq, u64 sender's clock in ms echoed back unchanged, and the
@@ -34,6 +36,7 @@ struct ping_msg {
     uint32_t seq;
     uint64_t t;
     wchar_t name[18];
+    uint32_t pid;
 };
 
 void *friends_self, **friends_orig;
@@ -117,7 +120,7 @@ void ping_seen(void *self, void **vt, uint64_t id, const uint8_t *d, uint32_t n,
 // PlayerGameData +0x9c holds the local player's in-game name, 16 characters at most.
 static void send_msg(uint64_t id, uint8_t type, uint32_t seq, uint64_t t)
 {
-    struct ping_msg m = {{'R', 'K', 'P'}, type, seq, t, {0}};
+    struct ping_msg m = {{'R', 'K', 'P'}, type, seq, t, {0}, self_pid};
     uint8_t *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
     uint8_t *pgd = gdm ? *(uint8_t **)(gdm + 8) : NULL;
     if (pgd)
@@ -130,11 +133,15 @@ static void read_pings(uint64_t now)
     uint32_t size;
     struct ping_msg m;
     uint64_t from;
+    bool pid_learned = false;
     for (int k = 0; k < 64 && ((Avail_t)net_vt[1])(net_self, &size, PING_CHANNEL); k++) {
         if (!((Read_t)net_vt[2])(net_self, &m, sizeof m, &size, &from, PING_CHANNEL))
             break;
-        if (size != sizeof m || memcmp(m.magic, "RKP", 3))
+        // Older builds send no player_id.
+        if ((size != sizeof m && size != offsetof(struct ping_msg, pid)) || memcmp(m.magic, "RKP", 3))
             continue;
+        if (size != sizeof m)
+            m.pid = 0;
         if (m.type == 1)
             send_msg(from, 2, m.seq, m.t);
         m.name[17] = 0;
@@ -143,6 +150,8 @@ static void read_pings(uint64_t now)
             if (peers[i].id != from)
                 continue;
             memcpy(peers[i].game_name, m.name, sizeof m.name);
+            if (m.pid && m.pid != peers[i].pid)
+                peers[i].pid = m.pid, pid_learned = true;
             if (m.type == 2 && now >= m.t && now - m.t < 5000) {
                 peers[i].rtt[peers[i].rtt_n++ % 5] = (uint32_t)(now - m.t);
                 peers[i].pong_ms = now;
@@ -150,6 +159,19 @@ static void read_pings(uint64_t now)
         }
         ReleaseSRWLockExclusive(&peers_lock);
     }
+    if (pid_learned && run_mgid)
+        save_mates();
+}
+
+uint32_t peer_pid(uint64_t id)
+{
+    uint32_t pid = 0;
+    AcquireSRWLockShared(&peers_lock);
+    for (int i = 0; i < MAX_PEERS; i++)
+        if (peers[i].id == id)
+            pid = peers[i].pid;
+    ReleaseSRWLockShared(&peers_lock);
+    return pid;
 }
 
 static uint32_t median_rtt(const struct peer *p)
@@ -251,6 +273,8 @@ static void hook_set_ui_text(void *h, const wchar_t *s)
 static bool calls_set_ui_text(uint8_t *base, uint32_t rva)
 {
     int32_t rel;
+    if (!readable(base + rva, 5))
+        return false;
     memcpy(&rel, base + rva + 1, 4);
     return base[rva] == 0xe8 && base + rva + 5 + rel == base + SET_UI_TEXT_RVA;
 }

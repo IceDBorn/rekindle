@@ -40,7 +40,7 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 | restore | restore_ground_items | 1 | Put items left on the ground back. |
 | restore | restore_runes | 1 | Give back runes earned after the game last wrote the save. |
 | restore | restore_position | 1 | Use the snapshot position when the save has none, for a crash in the first seconds of a run. |
-| restore | fix_boss_drops | 1 | Make the restored player number 1 again, so bosses drop dormant powers. |
+| restore | fix_boss_drops | 1 | Give the restored player its own number from the run again, so bosses drop dormant powers. |
 | restore | fix_graces | 1 | Light field boss graces again after reload events switch them off. |
 | restore | restore_enemy_hp | 1 | Put back the HP of damaged enemies and bosses that were alive in the snapshot. |
 | penalties | remove_afk_kick | 1 | Remove the 300 second idle kick. |
@@ -49,6 +49,7 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 | snapshots | first_after_s | 10 | Seconds into a run before the first snapshot. |
 | snapshots | every_s | 30 | Seconds between snapshots. |
 | snapshots | resume_after_restore_s | 60 | Seconds after a restore before snapshots start again. |
+| snapshots | stop_before_boss_s | 60 | Real seconds before a boss phase when snapshots stop, so a restore leaves time to rejoin. The boss restarts. |
 | ping | show_ping | 1 | Show the round trip time next to teammate names. Only teammates who also run Rekindle answer. |
 | ping | show_loss | 1 | Show packet loss from a teammate next to their name when it reaches 1%. |
 | log | level | error | `off`, `error`, `warn`, `info` or `debug`. Debug also logs the game's WinHTTP and Steam calls. |

@@ -132,6 +132,13 @@ bool build_answers(const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20])
         memcpy(m61 + 0x45, p61 + 0x25, 0x20), memcpy(m61 + 0x45, &mate2, 8);
         m61[1] = m07[1] = 3, m61[0x45 + 8] = m61[0x45 + 0x10] = 3;
     }
+    // Each entry carries the player's server player_id at +0xc; the template's 0xe and 0xd are from a recording.
+    uint64_t who[3] = {fake_host, fake_self, mate2};
+    for (int i = 0; i < 3; i++) {
+        uint32_t pid = mate_pid(who[i]);
+        if (pid)
+            memcpy(m61 + 5 + 0x20 * i + 0xc, &pid, 4);
+    }
     static const uint8_t m27[] = {0x27, 1, 0, 0, 0}, m49[] = {0x49, 0, 0, 0, 0};
     add_frames(&intro, true, 101, 0, 0, m61, mate2 ? sizeof m61 : sizeof p61);
     add_frames(&intro, true, 101, 0, 0, m07, 5);

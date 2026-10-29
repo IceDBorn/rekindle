@@ -28,6 +28,10 @@ DWORD WINAPI auto_restore(LPVOID unused)
         return 0;
     }
     run_mgid = mgid;
+    // PROBE: keep the snapshot this restore used; the restored game overwrites the run's file.
+    char kept[MAX_PATH + 8];
+    snprintf(kept, sizeof kept, "%s.used", path);
+    CopyFileA(path, kept, FALSE);
     mod_path(path, MATES_FILE);
     unsigned long long mm = 0, m0 = 0, m1 = 0, lobby = 0;
     if ((f = fopen(path, "r"))) {
@@ -39,6 +43,11 @@ DWORD WINAPI auto_restore(LPVOID unused)
             // Without a rejoin record in the save (a quit), plant the run's own lobby and check it is still alive.
             if (fscanf(f, " lobby %llu", &lobby) == 1 && lobby)
                 fake_lobby = run_lobby = lobby, lobby_from_save = true;
+            unsigned ps = 0, p0 = 0, p1 = 0;
+            if (fscanf(f, " pids %u %u %u", &ps, &p0, &p1) >= 1) {
+                self_pid = ps, run_pids[0] = p0, run_pids[1] = p1;
+                note(LOG_INFO, "Auto restore player ids self=%u mates=%u %u", ps, p0, p1);
+            }
         }
         fclose(f);
     }
