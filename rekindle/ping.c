@@ -286,6 +286,12 @@ static void hook_set_ui_text(void *h, const wchar_t *s)
         WideCharToMultiByte(CP_UTF8, 0, s, -1, line, sizeof line, NULL, NULL);
         log_dedup("UiName", line);
     }
+    // The party ready count ("N / M") goes through 0x79576b; the shared Roundtable watches it for a ready press.
+    int ready = 0, n = 0;
+    while (k == 2 && s && s[n] >= L'0' && s[n] <= L'9')
+        ready = ready * 10 + (s[n++] - L'0');
+    if (n && !wcsncmp(s + n, L" / ", 3) && s[n + 3] >= L'1' && s[n + 3] <= L'9')
+        hub_ready_text(ready);
     real_set_ui_text(h, s);
 }
 
@@ -303,13 +309,14 @@ DWORD WINAPI ping_thread(LPVOID unused)
     (void)unused;
     show_ping = cfg("ping", "show_ping", 1), show_loss = cfg("ping", "show_loss", 1);
     hud_on = cfg("ping", "hud_labels", 1), over_on = cfg("ping", "overhead_labels", 0);
+    bool hub = cfg("hub", "shared_roundtable", 0);
     uint8_t *base = (uint8_t *)GetModuleHandleA(NULL);
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     qpc_per_ms = f.QuadPart / 1000.0;
     real_set_ui_text = (SetUiText_t)(base + SET_UI_TEXT_RVA);
     // The code is only readable as plain x86 once the game has unpacked it. Pings are answered either way.
-    for (int i = 0; (show_ping || show_loss) && i < 1200; i++, Sleep(250))
+    for (int i = 0; (show_ping || show_loss || hub) && i < 1200; i++, Sleep(250))
         if (calls_set_ui_text(base, sites[0]) && calls_set_ui_text(base, sites[1]) && calls_set_ui_text(base, sites[2])) {
             int hooked = 0;
             for (int s = 0; s < 3; s++)

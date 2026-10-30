@@ -73,6 +73,14 @@ extern void *friends_self, **friends_orig;
 void ping_seen(void *self, void **vt, uint64_t id, const uint8_t *d, uint32_t n, int channel, bool incoming);
 DWORD WINAPI ping_thread(LPVOID unused);
 
+// hub.c: party members see each other in the Roundtable Hold.
+DWORD WINAPI hub_thread(LPVOID unused);
+void hub_tick(void);
+void hub_lobby_created(void *s, uint64_t lobby);
+void hub_lobby_joined(void *s, uint64_t lobby);
+void hub_lobby_left(uint64_t lobby);
+void hub_ready_text(int ready);
+
 // run_marker.c: the run in progress and its lobby mates.
 extern uint64_t run_mates[3], run_lobby;
 extern uint32_t self_pid, run_pids[3];

@@ -45,6 +45,7 @@ static uint64_t *fk_member(void *self, uint64_t *ret, uint64_t lobby, int i)
 
 static uint64_t fk_join(void *self, uint64_t lobby)
 {
+    hub_lobby_joined(self, lobby);
     reset_mates();
     uint64_t call = ((Join_t)mm_orig[14])(self, lobby == fake_lobby ? lobby : tr(lobby));
     if (lobby == fake_lobby) {

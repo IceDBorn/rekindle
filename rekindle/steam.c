@@ -358,6 +358,7 @@ static void hook_run_cbs(void)
     real_run_cbs();
     emu_callbacks();
     relay_tick();
+    hub_tick();
 }
 
 const struct import_hook steam_imports[] = {

@@ -156,8 +156,15 @@ void relay_tick(void)
     { \
         return ((Fwd_t)mm_stub[n])(s, tr(a), tr(b), tr(c)); \
     }
-TR_SLOT(16) TR_SLOT(19) TR_SLOT(20) TR_SLOT(21) TR_SLOT(23) TR_SLOT(24) TR_SLOT(25) TR_SLOT(26)
+TR_SLOT(16) TR_SLOT(19) TR_SLOT(21) TR_SLOT(23) TR_SLOT(24) TR_SLOT(25) TR_SLOT(26)
 TR_SLOT(31) TR_SLOT(32) TR_SLOT(33) TR_SLOT(34) TR_SLOT(36) TR_SLOT(37)
+
+static uint64_t tr20(void *s, uint64_t a, uint64_t b, uint64_t c)
+{
+    if (b && !strcmp((const char *)b, "inviteParam"))
+        hub_lobby_created(s, tr(a));
+    return ((Fwd_t)mm_stub[20])(s, tr(a), tr(b), tr(c));
+}
 
 static uint64_t tr13(void *s, uint64_t a, uint64_t b, uint64_t c)
 {
@@ -167,6 +174,7 @@ static uint64_t tr13(void *s, uint64_t a, uint64_t b, uint64_t c)
 
 static uint64_t tr15(void *s, uint64_t a, uint64_t b, uint64_t c)
 {
+    hub_lobby_left(tr(a));
     if (real_lobby && tr(a) == real_lobby)
         note(LOG_INFO, "Relay leave 0x%llx", (unsigned long long)real_lobby);
     return ((Fwd_t)mm_stub[15])(s, tr(a), b, c);
