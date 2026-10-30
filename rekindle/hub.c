@@ -27,7 +27,8 @@ static bool enabled;
 static uint8_t *base;
 static void *mm;
 static uint64_t party, session_lobby, joined_lobby;
-static bool leader, hub_active, own_call, synced, ready_closed;
+static bool leader, hub_active, own_call, synced, hub_leaving;
+static volatile uint8_t hub_closing;
 static uint64_t session_at, retry_at, loaded_at;
 static void *create_tramp, *join_tramp, *leave_tramp;
 static void run_pending(void);
@@ -89,7 +90,7 @@ static void leave_session(const char *why)
     note(LOG_INFO, "Hub leave session (%s)", why);
     if (leader && party && mm)
         ((SetData_t)mm_orig[20])(mm, party, HUB_KEY, "");
-    hub_active = synced = false;
+    hub_active = synced = false, hub_leaving = true, hub_closing = 1;
     session_lobby = joined_lobby = 0, retry_at = now() + 5000;
     if (sm && (state() == 3 || state() == 6))
         ((void (*)(void *, uint8_t))leave_tramp)(sm, 4);
@@ -129,7 +130,7 @@ void hub_lobby_left(uint64_t lobby)
     note(LOG_INFO, "Hub party 0x%llx left", (unsigned long long)lobby);
     if (hub_active)
         leave_session("party left");
-    party = 0, ready_closed = false;
+    party = 0;
 }
 
 // Session steps the map load would run; without them the members never exchange 0x0a/0x0b.
@@ -357,14 +358,6 @@ static void start_session(void)
         note(LOG_INFO, "Hub session create ok=%d", ok);
 }
 
-static volatile LONG ready_seen;
-
-// The party ready count from the HUD.
-void hub_ready_text(int ready)
-{
-    InterlockedExchange(&ready_seen, ready);
-}
-
 void hub_tick(void)
 {
     static int guest_stage = -1, stage1_ticks;
@@ -374,14 +367,11 @@ void hub_tick(void)
     uint8_t *sm = session();
     run_pending();
     int st = state();
-    // Ready states live in the session and the game's own create needs ours closed, which drops them and cancels the
-    // matchmaking. So ours closes at the first press (which is lost) and stays closed; later presses go to the party.
-    if (ready_seen > 0 && hub_active && !pending.kind && (st == 3 || st == 6)) {
-        leave_session("ready pressed");
-        ready_closed = true;
-    }
+    if (st == 0)
+        hub_leaving = false;
+    hub_closing = hub_active || hub_leaving;
     if (!local_player() || !in_hub()) {
-        loaded_at = 0, ready_closed = false;
+        loaded_at = 0;
         if (hub_active && local_player() && (st == 3 || st == 6))
             leave_session("left the Roundtable");
         if (hub_active && st == 0)
@@ -396,7 +386,7 @@ void hub_tick(void)
         retry_at = now() + 10000;
     }
     if (!hub_active) {
-        bool ready = party && st == 0 && !ready_closed && now() > loaded_at + 5000 && now() > retry_at;
+        bool ready = party && st == 0 && now() > loaded_at + 5000 && now() > retry_at;
         if (ready && (!leader || ((GetNum_t)mm_orig[17])(mm, party) >= 2))
             start_session();
         return;
@@ -583,6 +573,79 @@ static bool hook_join(void *sm, uint8_t type, void *ids, uint64_t a4, uint8_t *f
     return true;
 }
 
+// The session teardown sets the party's session-lost flag (+0x64), which fails a guest's matchmaking, then clears
+// the local ready flag (FUN_140dfa0a0 with 0). The Roundtable has no session without the hub, so both are undone.
+static void hook_teardown_ready(void *party_man, uint8_t ready)
+{
+    if (hub_active || hub_leaving) {
+        ((uint8_t *)party_man)[0x64] = 0;
+        note(LOG_INFO, "Hub kept ready state through the session close");
+        return;
+    }
+    ((void (*)(void *, uint8_t))(base + 0xdfa0a0))(party_man, ready);
+}
+
+// Matchmaking polls the session after a game create (0x140b1abb0, 0x140df8f20): 1 waits, 3 succeeds, else it
+// cancels. A create that waits for the hub session to close sees 7 or 0, so the poll reports waiting instead.
+static void *hook_create_poll(void *self, void *out)
+{
+    (void)self;
+    int st = state();
+    uint32_t code = pending.kind == 1 || st == 1 ? 1 : st == 3 ? 2 : 3;
+    ((void (*)(void *, uint32_t, uint32_t))(base + 0x80d210))(out, code, 0);
+    return out;
+}
+
+// The same poll after a game join (0x140df8c90): 4 waits, 6 succeeds. A join deferred for the hub close waits.
+static void *hook_join_poll(void *self, void *out)
+{
+    (void)self;
+    int st = state();
+    uint32_t code = pending.kind == 2 || st == 4 ? 1 : st == 6 ? 2 : 3;
+    ((void (*)(void *, uint32_t, uint32_t))(base + 0x80d210))(out, code, 0);
+    return out;
+}
+
+// The party job also needs members in the party member list (0x140df9420), which the hub session's teardown
+// empties. The Steam party lobby still counts them.
+static bool hook_party_members(void)
+{
+    if (((bool (*)(void))(base + 0xdf9420))())
+        return true;
+    return mm && party && ((GetNum_t)mm_orig[17])(mm, party) >= 2;
+}
+
+// The party's matchmaking job fails when the session-lost flag (+0x64) is set, which several session-ending paths
+// do. Its check at 0x140dfa5f0 jumps here and passes while the hub session is the one closing.
+static bool party_check_install(void)
+{
+    static const uint8_t pro[6] = {0x80, 0x79, 0x64, 0x00, 0x74, 0x26};
+    uint8_t *at = base + 0xdfa5f0, *t = alloc_near(base);
+    if (!t || !bytes_match(at, pro, 6))
+        return false;
+    uint64_t flag = (uint64_t)&hub_closing, fail = (uint64_t)(at + 6), pass = (uint64_t)(at + 0x2c);
+    static const uint8_t code[] = {
+        0x80, 0x79, 0x64, 0x00,                         // cmp byte [rcx+0x64], 0
+        0x74, 0x1f,                                     // je pass
+        0x50,                                           // push rax
+        0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0,             // mov rax, &hub_closing
+        0x80, 0x38, 0x00,                               // cmp byte [rax], 0
+        0x58,                                           // pop rax
+        0x75, 0x0e,                                     // jne pass
+        0xff, 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // jmp fail
+        0xff, 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // pass: jmp pass
+    };
+    memcpy(t, code, sizeof code);
+    memcpy(t + 9, &flag, 8), memcpy(t + 29, &fail, 8), memcpy(t + 43, &pass, 8);
+    int32_t rel = (int32_t)(t - (at + 5));
+    DWORD old;
+    VirtualProtect(at, 6, PAGE_EXECUTE_READWRITE, &old);
+    at[0] = 0xe9, memcpy(at + 1, &rel, 4), at[5] = 0x90;
+    VirtualProtect(at, 6, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), at, 6);
+    return true;
+}
+
 // Points both receive-side calls of FUN_1405abe30 at hook_remote_fire through a stub within rel32 range.
 static bool redirect_calls(const uint32_t *sites, int n, uint32_t fn, void *hook)
 {
@@ -669,13 +732,21 @@ DWORD WINAPI hub_thread(LPVOID unused)
     for (int i = 0; i < 1200 && !bytes_match(b + 0xdefbd0, create_pro, 17); i++)
         Sleep(250);
     base = b;
-    static const uint32_t fire_sites[2] = {0x5b3033, 0x5b0628};
+    static const uint8_t poll_pro[9] = {0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x05};
+    static const uint32_t fire_sites[2] = {0x5b3033, 0x5b0628}, teardown_site[1] = {0xdf664e},
+                          members_site[1] = {0xdfa622};
     if (!hook_leave_install() || !hook_evsync_install() || !redirect_calls(fire_sites, 2, 0x5abe30, hook_remote_fire) ||
+        !redirect_calls(teardown_site, 1, 0xdfa0a0, hook_teardown_ready) || !bytes_match(b + 0xb1abb0, poll_pro, 9) ||
+        !bytes_match(b + 0xdf8f20, poll_pro, 9) || !bytes_match(b + 0xdf8c90, poll_pro, 9) || !party_check_install() ||
+        !redirect_calls(members_site, 1, 0xdf9420, hook_party_members) ||
         !(create_tramp = patch_prologue(0xdefbd0, create_pro, 17, (void *)hook_create, "hub create")) ||
         !(join_tramp = patch_prologue(0xdf0f70, join_pro, 14, (void *)hook_join, "hub join"))) {
         note(LOG_ERROR, "Shared Roundtable hooks failed, feature off");
         return 0;
     }
+    jump_to(b + 0xb1abb0, (void *)hook_create_poll);
+    jump_to(b + 0xdf8f20, (void *)hook_create_poll);
+    jump_to(b + 0xdf8c90, (void *)hook_join_poll);
     enabled = true;
     return 0;
 }
