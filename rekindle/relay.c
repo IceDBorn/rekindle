@@ -67,6 +67,14 @@ void relay_resolve(bool live)
     snapshot_restoring(0, 0);
 }
 
+static volatile LONG abandon;
+
+// A restore that ended in the Roundtable: its relay lobby must go, or friends' invites keep landing in it.
+void relay_abandon(void)
+{
+    InterlockedExchange(&abandon, 1);
+}
+
 bool relay_hold_505(void)
 {
     return waiting;
@@ -99,6 +107,14 @@ void relay_tick(void)
     uint64_t now = unix_ms();
     if (!mm_self || !utils_self)
         return;
+    if (InterlockedExchange(&abandon, 0)) {
+        if (real_lobby) {
+            note(LOG_INFO, "Relay leave 0x%llx (restore ended)", (unsigned long long)real_lobby);
+            ((Fwd_t)mm_stub[15])(mm_self, real_lobby, 0, 0);
+        }
+        game_lobby = real_lobby = run_lobby = 0, fake_lobby = fake_host = restore_mgid = 0;
+        lobby_decided = true, waiting = false, create_call = search_call = 0;
+    }
     if (restore_mgid && !lobby_decided && !search_call && now - search_at > 5000) {
         char v[24];
         snprintf(v, sizeof v, "%llu", (unsigned long long)restore_mgid);

@@ -18,3 +18,5 @@ void snapshot_restoring(uint64_t mgid, uint64_t clock);
 int run_player_number(uint64_t mgid, uint64_t id);
 // rekindle/relay.c: the restored world has loaded, so a teammate who restores later can join (nrk_ready=1).
 void relay_ready(void);
+// rekindle/relay.c: the restore ended in the Roundtable, so the relay lobby is left on the next tick.
+void relay_abandon(void);

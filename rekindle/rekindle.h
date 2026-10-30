@@ -79,6 +79,7 @@ void hub_tick(void);
 void hub_lobby_created(void *s, uint64_t lobby);
 void hub_lobby_joined(void *s, uint64_t lobby);
 void hub_lobby_left(uint64_t lobby);
+void hub_marker_cleared(void);
 
 // run_marker.c: the run in progress and its lobby mates.
 extern uint64_t run_mates[3], run_lobby;

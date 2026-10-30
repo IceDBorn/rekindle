@@ -122,6 +122,7 @@ void clear_marker(const char *why)
     memset(run_mates, 0, sizeof run_mates), memset(run_pids, 0, sizeof run_pids);
     mod_path(path, MATES_FILE);
     DeleteFileA(path);
+    hub_marker_cleared();
 }
 
 void run_marker_http(const void *data, size_t n)

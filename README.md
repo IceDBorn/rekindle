@@ -56,6 +56,7 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 | ping | hud_labels | 1 | Show ping and loss in the HUD party list. |
 | ping | overhead_labels | 0 | Show ping and loss in the name labels above teammates. |
 | hub | shared_roundtable | 0 | Experimental. Players in one game party see each other in the Roundtable Hold. Every party member needs Rekindle. Players see each other until the expedition starts. |
+| hub | sparring_pvp | 0 | Experimental. Needs shared_roundtable=1. Players in the Sparring Grounds can hit each other, and a player brought to 1 HP dies. |
 | log | level | error | `off`, `error`, `warn`, `info` or `debug`. Debug also logs the game's WinHTTP and Steam calls. |
 
 ## Build

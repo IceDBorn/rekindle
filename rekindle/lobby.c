@@ -16,7 +16,7 @@ typedef uint64_t (*Join_t)(void *, uint64_t);
 
 static uint64_t *fk_owner(void *self, uint64_t *ret, uint64_t lobby)
 {
-    if (lobby != fake_lobby || (host_gone && real_lobby))
+    if (!fake_lobby || lobby != fake_lobby || (host_gone && real_lobby))
         return ((GetId_t)mm_orig[35])(self, ret, tr(lobby));
     *ret = host_gone ? fake_self : fake_host;
     note(LOG_DEBUG, "GetLobbyOwner -> %llu", (unsigned long long)*ret);
@@ -25,7 +25,7 @@ static uint64_t *fk_owner(void *self, uint64_t *ret, uint64_t lobby)
 
 static int fk_num(void *self, uint64_t lobby)
 {
-    if (lobby != fake_lobby || (host_gone && real_lobby))
+    if (!fake_lobby || lobby != fake_lobby || (host_gone && real_lobby))
         return ((GetNum_t)mm_orig[17])(self, tr(lobby));
     note(LOG_DEBUG, "GetNumLobbyMembers -> %d", host_gone ? 1 : 2);
     return host_gone ? 1 : 2;
@@ -33,7 +33,7 @@ static int fk_num(void *self, uint64_t lobby)
 
 static uint64_t *fk_member(void *self, uint64_t *ret, uint64_t lobby, int i)
 {
-    if (lobby != fake_lobby || (host_gone && real_lobby)) {
+    if (!fake_lobby || lobby != fake_lobby || (host_gone && real_lobby)) {
         ((GetMember_t)mm_orig[18])(self, ret, tr(lobby), i);
         note_mate(*ret, tr(lobby));
         return ret;
@@ -47,8 +47,9 @@ static uint64_t fk_join(void *self, uint64_t lobby)
 {
     hub_lobby_joined(self, lobby);
     reset_mates();
-    uint64_t call = ((Join_t)mm_orig[14])(self, lobby == fake_lobby ? lobby : tr(lobby));
-    if (lobby == fake_lobby) {
+    bool fake = fake_lobby && lobby == fake_lobby;
+    uint64_t call = ((Join_t)mm_orig[14])(self, fake ? lobby : tr(lobby));
+    if (fake) {
         fake_join_call = call;
         run_restored = true;
         if (cfg("restore", "keep_online", 1))
@@ -94,8 +95,7 @@ void install_fakes(int kind, void **vt, void **nv, int slots)
     // Ping needs the P2P wrapper even when a relay join or a live rejoin has already dropped the fake lobby.
     if (kind == 6 && slots > 6)
         emu_wrap_net(vt, nv);
-    if (!fake_lobby)
-        return;
+    // The Shared Roundtable and the relay need the matchmaking hooks with no restore pending too.
     if (kind == 1 && slots > 37) {
         mm_orig = vt;
         relay_wrap_mm(nv);
@@ -107,7 +107,7 @@ void install_fakes(int kind, void **vt, void **nv, int slots)
         utils_orig = vt;
         nv[11] = fk_done;
         nv[13] = fk_result;
-    } else if (kind == 5 && slots > 15) {
+    } else if (kind == 5 && slots > 15 && fake_lobby) {
         emu_wrap_user(vt, nv);
     }
 }

@@ -57,9 +57,15 @@ DWORD WINAPI auto_restore(LPVOID unused)
     free(snapshot);
     snprintf(save, MAX_PATH, "%s\\Nightreign\\%llu\\NR0000.sl2", appdata ? appdata : "", (unsigned long long)fake_self);
     int r = plant_save(save, mgid, box, have_box);
-    restore_mgid = mgid;
     note(r < 0 ? LOG_ERROR : LOG_INFO, "Auto restore mgid=%llu plant=%d box=%d", mgid, r, have_box);
-    if (r >= 0 && clock)
+    if (r < 0) {
+        // A save that cannot take the run makes the marker stale; its fake host and lobby would block joins.
+        fake_lobby = 0, fake_host = 0, lobby_from_save = false, self_pid = 0;
+        clear_marker("restore failed");
+        return 0;
+    }
+    restore_mgid = mgid;
+    if (clock)
         snapshot_restoring(mgid, clock);
     return 0;
 }

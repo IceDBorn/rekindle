@@ -422,6 +422,7 @@ static void hook_sync_update(void *mgr, float dt)
         if (!*(int *)(ses + 0xc) && gdm && gdm[0xdc] == 1) {
             log_line(LOG_INFO, "restore mgid=%llu ended in the Roundtable", (unsigned long long)restoring_mgid);
             restoring_mgid = 0;
+            relay_abandon();
             clear_marker("run gone");
         } else {
             restore_snapshot(restoring_mgid);

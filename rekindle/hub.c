@@ -15,6 +15,8 @@
 #define BEAST_MODULE_VT 0x2c13008 // CSChrMajyuuModule, the Executor beast
 #define PLAYER_INS_VT 0x2c307f8
 #define PLAYER_GAME_DATA_VT 0x2be6e28
+#define NON_COMBAT_SP 9621 // Non Combat Area: the whole Roundtable Hold except the Sparring Grounds
+#define PVP_TEAM 6           // the enemy team: hostile to the local player, so hits land
 
 typedef bool (*Create_t)(void *, uint8_t, uint8_t *);
 typedef bool (*JoinSess_t)(void *, uint8_t, void *, uint64_t, uint8_t *);
@@ -23,10 +25,10 @@ typedef const char *(*GetData_t)(void *, uint64_t, const char *);
 typedef bool (*SetData_t)(void *, uint64_t, const char *, const char *);
 typedef int (*GetNum_t)(void *, uint64_t);
 
-static bool enabled;
+static bool enabled, spar_pvp;
 static uint8_t *base;
 static void *mm;
-static uint64_t party, session_lobby, joined_lobby;
+static uint64_t party, session_lobby, joined_lobby, held_party;
 static bool leader, hub_active, own_call, synced, hub_leaving;
 static volatile uint8_t hub_closing;
 static uint64_t session_at, retry_at, loaded_at;
@@ -103,6 +105,10 @@ void hub_lobby_created(void *s, uint64_t lobby)
     if (!enabled)
         return;
     mm = s;
+    uint8_t *gdm = *(uint8_t **)(base + GAME_DATA_MAN_RVA);
+    // A party made while a cancelled restore still holds the run marker; taken once the marker is cleared.
+    if (state() == 0 && run_mgid && gdm && gdm[0xdc] == 1 && lobby != party)
+        held_party = lobby;
     if (state() == 0 && in_hub() && lobby != party) {
         party = lobby, leader = true;
         note(LOG_INFO, "Hub party 0x%llx (leader)", (unsigned long long)lobby);
@@ -123,8 +129,20 @@ void hub_lobby_joined(void *s, uint64_t lobby)
     note(LOG_INFO, "Hub party 0x%llx (member)", (unsigned long long)lobby);
 }
 
+void hub_marker_cleared(void)
+{
+    uint64_t lobby = held_party;
+    held_party = 0;
+    if (!enabled || !lobby || party || state() != 0 || !in_hub())
+        return;
+    party = lobby, leader = true;
+    note(LOG_INFO, "Hub party 0x%llx (leader, after the restore)", (unsigned long long)lobby);
+}
+
 void hub_lobby_left(uint64_t lobby)
 {
+    if (lobby == held_party)
+        held_party = 0;
     if (!enabled || !party || lobby != party)
         return;
     note(LOG_INFO, "Hub party 0x%llx left", (unsigned long long)lobby);
@@ -358,6 +376,59 @@ static void start_session(void)
         note(LOG_INFO, "Hub session create ok=%d", ok);
 }
 
+static bool has_speffect(uint8_t *chr, int id)
+{
+    uint8_t *se = *(uint8_t **)(chr + 0x190);
+    int n = 0;
+    for (uint8_t *e = se ? *(uint8_t **)(se + 8) : NULL; e && n < 512; e = *(uint8_t **)(e + 0x38), n++)
+        if (*(int *)(e + 8) == id)
+            return true;
+    return false;
+}
+
+// While the local player is in the Sparring Grounds, other players are enemies in this game only (remote SpEffects
+// lag, so only the local area counts). The area holds HP at 1, so a local player left at 1 HP dies.
+static void sparring_pvp(void)
+{
+    static struct {
+        uint8_t *chr, team;
+    } set[MAX_PEERS];
+    uint8_t *p = local_player(), *wcm = *(uint8_t **)(base + WORLD_CHR_MAN_RVA);
+    if (!p || !wcm)
+        return;
+    bool on = hub_on() && synced && !has_speffect(p, NON_COMBAT_SP), any = false;
+    uint8_t **b = *(uint8_t ***)(wcm + 0x17b98), **e = *(uint8_t ***)(wcm + 0x17ba0);
+    for (int i = 0; i < MAX_PEERS; i++) {
+        bool found = false;
+        for (uint8_t **c = b; set[i].chr && c && c < e && !found; c++)
+            found = *c == set[i].chr;
+        if (found && on) {
+            set[i].chr[0x74] = PVP_TEAM, any = true;
+            continue;
+        }
+        if (found)
+            set[i].chr[0x74] = set[i].team, note(LOG_INFO, "Sparring PvP off for %p", set[i].chr);
+        set[i].chr = NULL;
+    }
+    for (uint8_t **c = b; on && c && c < e; c++) {
+        uint8_t *chr = *c;
+        if (!chr || chr == p || *(uint8_t **)chr != base + PLAYER_INS_VT || (chr[0x70] != 0 && chr[0x70] != 13) ||
+            chr[0x74] == PVP_TEAM)
+            continue;
+        for (int i = 0; i < MAX_PEERS; i++)
+            if (!set[i].chr) {
+                set[i].chr = chr, set[i].team = chr[0x74], chr[0x74] = PVP_TEAM, any = true;
+                note(LOG_INFO, "Sparring PvP on for %p (team %d)", chr, set[i].team);
+                break;
+            }
+    }
+    uint8_t *data = any ? **(uint8_t ***)(p + 0x1b8) : NULL;
+    if (data && *(int *)(data + 0x140) == 1) {
+        *(int *)(data + 0x140) = 0;
+        note(LOG_INFO, "Sparring PvP death");
+    }
+}
+
 void hub_tick(void)
 {
     static int guest_stage = -1, stage1_ticks;
@@ -374,8 +445,9 @@ void hub_tick(void)
         loaded_at = 0;
         if (hub_active && local_player() && (st == 3 || st == 6))
             leave_session("left the Roundtable");
+        // A death reload drops the session while the player is gone; the next one needs its lobby published.
         if (hub_active && st == 0)
-            hub_active = false;
+            hub_active = synced = false, session_lobby = joined_lobby = 0;
         return;
     }
     if (!loaded_at)
@@ -393,6 +465,17 @@ void hub_tick(void)
     }
     if (st != 3 && st != 6)
         return;
+    // A leader's death reload opens a new session; a member left behind in the old one moves to it.
+    static uint64_t key_at;
+    if (!leader && mm && party && joined_lobby && now() > key_at) {
+        const char *v = ((GetData_t)mm_orig[19])(mm, party, HUB_KEY);
+        uint64_t id = v && *v ? strtoull(v, NULL, 16) : 0;
+        key_at = now() + 2000;
+        if (id && id != joined_lobby) {
+            leave_session("leader moved");
+            return;
+        }
+    }
     if (st == 3)
         sm[0x1f] = 0;
     // A character change drops the player from the session; it starts over when it comes back.
@@ -474,6 +557,8 @@ void hub_tick(void)
     spawned_at = !spawned ? 0 : spawned_at ? spawned_at : now();
     if (spawned_at && now() > spawned_at + 3000 && now() >= numbers_at)
         numbers_at = now() + 1000, set_numbers(sm);
+    if (spar_pvp)
+        sparring_pvp();
     if (!synced)
         return;
     // A guest in state 6 counts as offline while this byte is set, and the offline tick re-owns every chr.
@@ -724,6 +809,7 @@ DWORD WINAPI hub_thread(LPVOID unused)
     (void)unused;
     if (!cfg("hub", "shared_roundtable", 0))
         return 0;
+    spar_pvp = cfg("hub", "sparring_pvp", 0);
     static const uint8_t create_pro[17] = {0x48, 0x89, 0x5c, 0x24, 0x18, 0x88, 0x54, 0x24, 0x10,
                                            0x57, 0x48, 0x81, 0xec, 0x80, 0x06, 0x00, 0x00};
     static const uint8_t join_pro[14] = {0x88, 0x54, 0x24, 0x10, 0x53, 0x56, 0x57,
