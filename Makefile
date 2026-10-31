@@ -9,7 +9,7 @@ HEADERS = $(wildcard common/*.h rekindle/*.h snapshot/*.h)
 
 all: rekindle.dll
 
-rekindle.dll: $(COMMON) $(REKINDLE) $(SNAPSHOT) $(HEADERS)
+rekindle.dll: $(COMMON) $(REKINDLE) $(SNAPSHOT) $(HEADERS) rekindle.ini
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(COMMON) $(REKINDLE) $(SNAPSHOT) -lbcrypt -lws2_32
 
 clean:

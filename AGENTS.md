@@ -4,7 +4,7 @@ Rekindle is a Windows DLL for Elden Ring Nightreign, written in C and cross-comp
 
 ## Build
 
-- `nix run .` builds `rekindle.dll` in the repo root. `nix build` builds it into `./result`.
+- `nix run .` builds `rekindle.dll` in the repo root. `nix build` builds it with `rekindle.ini` into `./result`.
 - Inside `nix develop`, run `make`. The bare MinGW gcc wrapper needs `-L<mcfgthreads>/lib`, which the flake app adds for you.
 - `make` must build without warnings (`-Wall`).
 - `rekindle.dll` and `result` are ignored. Never commit them.
@@ -14,7 +14,7 @@ Rekindle is a Windows DLL for Elden Ring Nightreign, written in C and cross-comp
 - `rekindle/` and `snapshot/` build into one DLL. Calls between them go through `common/modules.h`, and nothing else crosses that line.
 - Game addresses are RVAs into `nightreign.exe` (base plus offset). Shared ones live in `common/game.h`. Name what an offset holds in a short comment.
 - Snapshot record ids and data file names live in `common/snapshot_format.h`. Data files start with `rekindle_` and sit next to the DLL (`mod_path`).
-- Settings are read with `cfg(section, key, default)`. A new key also needs a line in README.md and in the ini that ships with the DLL.
+- Settings are read with `cfg(section, key, default)`. A new key also needs a line in README.md and in `rekindle.ini`, which the build embeds and writes out when the file is missing.
 - Log with `log_line(level, ...)` into `rekindle.log`. Keep debug output at `LOG_DEBUG`.
 - Comments are at most two lines and only explain what is not obvious from the code.
 - Match the existing style: dense C, early returns, fixed buffers where the size is known.

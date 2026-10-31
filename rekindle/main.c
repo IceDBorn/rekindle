@@ -52,6 +52,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID r)
     DisableThreadLibraryCalls(self);
     InitializeCriticalSection(&emu_lock);
     mod_dir_init(self);
+    cfg_write_default();
     log_init("rekindle.log");
     fake_lobby = DEFAULT_LOBBY, fake_host = DEFAULT_HOST;
     CloseHandle(CreateThread(NULL, 0, auto_restore, NULL, 0, NULL));

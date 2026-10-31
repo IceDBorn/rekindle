@@ -28,7 +28,7 @@ path = "dll/rekindle.dll"
 load_early = true
 ```
 
-Rekindle reads `rekindle.ini` from the folder that holds the DLL and writes its data files and `rekindle.log` there too. Missing keys keep their defaults.
+Rekindle reads `rekindle.ini` from the folder that holds the DLL and writes its data files and `rekindle.log` there too. Missing keys keep their defaults. If `rekindle.ini` is missing, Rekindle writes one with the defaults at launch.
 
 The game addresses are for one build of `nightreign.exe`. A game update can break Rekindle until the addresses are updated.
 
@@ -65,7 +65,7 @@ With Nix:
 
 ```sh
 nix run .      # builds rekindle.dll in this folder
-nix build      # builds it into ./result
+nix build      # builds rekindle.dll and rekindle.ini into ./result
 nix develop    # shell with the MinGW toolchain, then run make
 ```
 
