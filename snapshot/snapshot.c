@@ -397,6 +397,13 @@ static void finish_snapshot(void)
              snap_stream_count, snap_guest);
 }
 
+static volatile LONG boss_killed;
+
+void snapshot_boss_killed(void)
+{
+    InterlockedExchange(&boss_killed, 1);
+}
+
 static void hook_sync_update(void *mgr, float dt)
 {
     if (!InterlockedExchange(&sync_tick_seen, 1))
@@ -453,14 +460,18 @@ static void hook_sync_update(void *mgr, float dt)
         // A restore lands before the boss phase with stop_before_boss_ms left for the teammates to join.
         int64_t eta = boss_eta_ms(gb, now);
         bool phase = boss_phase(gb), b = phase || (eta >= 0 && (uint64_t)eta < stop_before_boss_ms);
+        // One snapshot per field boss kill. A restore after a day boss's death never starts the next day.
+        bool kill = boss_killed && InterlockedExchange(&boss_killed, 0) && !b && !day3_started(gb);
         // The first snapshot after a boss phase (the next day) runs at once.
         if (b != boss && !b)
             last_auto_ms = 0;
         if (b != boss)
             boss = b, log_line(LOG_INFO, !b ? "snapshots resumed" : phase ? "snapshots paused, boss phase"
                                                      : "snapshots paused, boss in %lld s", (long long)eta / 1000);
-        if ((early || now - last_auto_ms > snapshot_every_ms) && !restoring_mgid && !hub && !boss) {
+        if ((kill || ((early || now - last_auto_ms > snapshot_every_ms) && !boss)) && !restoring_mgid && !hub) {
             last_auto_ms = unix_ms();
+            if (kill)
+                log_line(LOG_INFO, "snapshot at boss kill");
             take_snapshot();
             streaming = snap_id_count > 0;
         }

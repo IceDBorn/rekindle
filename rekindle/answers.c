@@ -144,6 +144,9 @@ bool build_answers(uint64_t mgid, const uint8_t *s, size_t n, uint64_t *clock, u
     int cnt = mate2 ? 3 : 2, nos[3];
     for (int i = 0; i < cnt; i++)
         nos[i] = run_player_number(mgid, who[i]);
+    // A solo run has no saved numbers. The player keeps number 1 there, and the placeholder host takes the next one.
+    if (fake_host == DEFAULT_HOST && !nos[0] && !nos[1])
+        nos[1] = 1;
     for (int i = 0; i < cnt; i++)
         for (int no = 1; !nos[i]; no++) {
             int k = 0;

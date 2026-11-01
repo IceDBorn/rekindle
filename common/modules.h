@@ -18,6 +18,8 @@ void marker_rejoined(void);
 void snapshot_start(void);
 // snapshot/clock.c: the run being restored and its snapshot clock, set by the auto restore.
 void snapshot_restoring(uint64_t mgid, uint64_t clock);
+// snapshot/snapshot.c: the game reported a boss kill, so a field boss kill takes a snapshot.
+void snapshot_boss_killed(void);
 // snapshot/player.c: a player's number recorded for the run, 0 if unknown. Usable before the run starts.
 int run_player_number(uint64_t mgid, uint64_t id);
 // rekindle/relay.c: the restored world has loaded, so a teammate who restores later can join (nrk_ready=1).

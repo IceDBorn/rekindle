@@ -193,6 +193,9 @@ void run_marker_http(const void *data, size_t n)
         unsigned long long m = strtoull((const char *)p + 17, NULL, 10);
         if (m)
             set_marker(path, m);
+    } else if (find_bytes(s, n, "\"RequestKillBossLogParams\"") && find_bytes(s, n, "\"is_kill_boss\":true")) {
+        // The same event with false means the fight ended and the boss lived.
+        snapshot_boss_killed();
     } else if (find_bytes(s, n, "\"RequestGetResultDataParams\"")) {
         clear_marker("result");
     } else if (find_bytes(s, n, "\"RequestDeleteSessionParams\"") && run_mgid) {

@@ -7,6 +7,7 @@ It works for solo runs and co-op runs, after a crash or a quit to the desktop or
 ## How it works
 
 - During a run, Rekindle writes a snapshot of the host's world every 30 seconds to `rekindle_run_<multi_game_id>.bin`. A snapshot is what the game would send a player joining at that moment. `rekindle_active_run.txt` names the run in progress, and only the end of the run clears it, so a quit keeps the run restorable. A restore that lands in the Roundtable instead of the run counts as a failed rejoin, and the marker is dropped after three in a row. `rekindle_mates.txt` lists the teammates and the run's Steam lobby.
+- Snapshots stop shortly before each boss phase. Every field boss kill before day 3 also takes one, outside that pause. Day boss kills take none, because a restore after one never starts the next day.
 - On the next launch, if a run was still in progress, Rekindle adds a rejoin record to `NR0000.sl2`, so the game offers to resume the run. It backs up the save to `NR0000.sl2.pre_restore` first.
 - In co-op, the restore first checks the run's lobby. If a teammate is still in the run, the game rejoins them as usual.
 - The rejoin goes to a fake lobby. A fake host answers the game's P2P link with the snapshot, then leaves like a crashed host, and the player keeps the run as its new host.

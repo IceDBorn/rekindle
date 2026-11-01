@@ -57,6 +57,13 @@ bool boss_phase(uint8_t *base)
     return w && ((q >> 34) & 31) == 23 && ((q >> 39) & 63) == 59 && ((q >> 45) & 63) == 59;
 }
 
+// +0x154 turns 0xff when the day 2 boss phase ends; the clock stays stopped through day 3.
+bool day3_started(uint8_t *base)
+{
+    uint8_t *w = *(uint8_t **)(base + WORLD_AREA_TIME_RVA);
+    return w && w[0x154] == 0xff;
+}
+
 // Real ms until the day clock stops, from its rate over the last 5 s or more (storm speed and skips included);
 // -1 while the rate is unknown.
 int64_t boss_eta_ms(uint8_t *base, uint64_t now)
@@ -102,6 +109,7 @@ void world_probe(uint8_t *base)
     static int last_day = -1, last_stop = -1;
     static uint32_t last_tile = 0xffffffff;
     boss_probe(base);
+    party_probe(base);
     if (!w)
         return;
     uint64_t q = *(uint64_t *)(w + 0x100);

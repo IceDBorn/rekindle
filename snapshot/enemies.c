@@ -59,9 +59,11 @@ void boss_probe(uint8_t *base)
             if (free_slot < 0)
                 continue;
             i = free_slot;
-            big[i].handle = h, big[i].npc = npc, big[i].hurt = big[i].dead = false;
+            big[i].handle = h, big[i].npc = npc, big[i].hurt = big[i].dead = false, big[i].max = 0;
             log_line(LOG_DEBUG, "probe big-enemy appear npc=%d handle=%016llx hp=%d/%d", npc, (unsigned long long)h, hp[0], hp[1]);
         }
+        if (big[i].max && big[i].max != hp[1])
+            log_line(LOG_DEBUG, "probe big-enemy max npc=%d handle=%016llx %d->%d", npc, (unsigned long long)h, big[i].max, hp[1]);
         big[i].seen = true, big[i].hp = hp[0], big[i].max = hp[1];
         if (!big[i].hurt && hp[0] < hp[1]) {
             big[i].hurt = true;
@@ -80,6 +82,25 @@ void boss_probe(uint8_t *base)
         }
 }
 
+// PROBE: logs the session member list and the player's number, to date what enemy scaling follows.
+void party_probe(uint8_t *base)
+{
+    static int last_n = -1, last_no = -1;
+    uint8_t *session = *(uint8_t **)(base + SESSION_MAN_RVA);
+    uint8_t *gdm = *(uint8_t **)(base + GAME_DATA_MAN_RVA), *pgd = gdm ? *(uint8_t **)(gdm + 8) : NULL;
+    if (!session || !pgd)
+        return;
+    uint8_t *m = *(uint8_t **)(session + 0x78), *end = *(uint8_t **)(session + 0x80);
+    int n = m && end > m ? (int)((end - m) / 0xf0) : 0, no = *(int *)(pgd + 8);
+    if (n == last_n && no == last_no)
+        return;
+    last_n = n, last_no = no;
+    log_line(LOG_INFO, "probe party members=%d number=%d state=%d", n, no, *(int *)(session + 0xc));
+    for (int i = 0; i < n && i < 8; i++, m += 0xf0)
+        log_line(LOG_DEBUG, "probe party member %d id=%llx no=%d self=%d", i, *(unsigned long long *)(m + 0x10),
+                 *(int *)(m + 0xd4), m[0xe1]);
+}
+
 void queue_enemy_hp(const uint8_t *d, uint32_t l)
 {
     if (l % sizeof(struct enemy_hp))
@@ -88,6 +109,10 @@ void queue_enemy_hp(const uint8_t *d, uint32_t l)
     memcpy(pending_hp, d, pending_hp_count * sizeof(struct enemy_hp));
     memset(pending_missed, 0, sizeof pending_missed);
     pending_hp_until = unix_ms() + 300000;
+    log_line(LOG_INFO, "enemy-restore queued %d", pending_hp_count);
+    for (int i = 0; i < pending_hp_count; i++)
+        log_line(LOG_DEBUG, "enemy-restore queued npc=%d handle=%016llx saved %d/%d", pending_hp[i].npc,
+                 (unsigned long long)pending_hp[i].handle, pending_hp[i].hp, pending_hp[i].max);
 }
 
 // Enemies load with their map block after the restore, so matching runs every tick for a few minutes.
