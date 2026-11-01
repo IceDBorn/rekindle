@@ -187,17 +187,20 @@ static void resend(uint8_t *sm)
     note(LOG_DEBUG, "Hub resent player data");
 }
 
-// Reads a pointer at p + off, or NULL when that memory is not readable.
+// Reads a pointer at p + off, or NULL when that memory is not readable. readable() is too slow for this, because
+// its VirtualQuery calls stalled a Windows player's frame by about 190 ms per set_numbers.
 static uint8_t *ptr_at(uint8_t *p, size_t off)
 {
-    return p && readable(p + off, 8) ? *(uint8_t **)(p + off) : NULL;
+    uint8_t *v = NULL;
+    return p && ReadProcessMemory(GetCurrentProcess(), p + off, &v, sizeof v, NULL) ? v : NULL;
 }
 
 // A player still being spawned has garbage in these fields, so every step is checked.
 static uint8_t *net_object(uint8_t *p)
 {
     uint8_t *c = ptr_at(ptr_at(ptr_at(ptr_at(p, 0x5a8), 0x1e8), 0), 0x18);
-    return readable(c, 16) ? c : NULL;
+    uint8_t head[16];
+    return c && ReadProcessMemory(GetCurrentProcess(), c, head, sizeof head, NULL) ? c : NULL;
 }
 
 // A joined guest's player keeps the offline net class with no owner id, so its state never goes out.

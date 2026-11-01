@@ -17,6 +17,7 @@
 #define LOSS_WINDOW_MS 2000
 #define NAME_REFRESH_MS 5000
 #define TEXT_REFRESH_MS 2000
+#define PONG_QUEUE 32
 #define MAX_PEERS 5
 #define SET_UI_TEXT_RVA 0x792c70
 
@@ -47,6 +48,15 @@ static void *volatile net_self;
 static void **net_vt;
 static bool show_ping = true, show_loss = true, hud_on = true, over_on;
 static volatile bool ping_ready;
+
+struct pong {
+    uint64_t id;
+    uint32_t seq;
+    uint64_t t;
+};
+static struct pong pongs[PONG_QUEUE];
+static int npongs;
+static SRWLOCK pongs_lock = SRWLOCK_INIT;
 static double qpc_per_ms = 1;
 
 typedef bool (*Send_t)(void *, uint64_t, const void *, uint32_t, int, int);
@@ -98,7 +108,8 @@ void ping_seen(void *self, void **vt, uint64_t id, const uint8_t *d, uint32_t n,
         return;
     if (log_level >= LOG_DEBUG) {
         char line[64];
-        snprintf(line, sizeof line, "ch=%d in=%d id=%llx", channel, incoming, (unsigned long long)id);
+        snprintf(line, sizeof line, "ch=%d in=%d id=%llx tid=%lu", channel, incoming, (unsigned long long)id,
+                 GetCurrentThreadId());
         log_dedup("P2P", line);
     }
     uint64_t now = now_ms();
@@ -130,6 +141,27 @@ static void send_msg(uint64_t id, uint8_t type, uint32_t seq, uint64_t t)
     ((Send_t)net_vt[0])(net_self, id, &m, sizeof m, 0, PING_CHANNEL);
 }
 
+// Pongs wait here for the next game send. A full queue drops them and the peer's next ping tries again.
+static void queue_pong(uint64_t id, uint32_t seq, uint64_t t)
+{
+    AcquireSRWLockExclusive(&pongs_lock);
+    if (npongs < PONG_QUEUE)
+        pongs[npongs++] = (struct pong){id, seq, t};
+    ReleaseSRWLockExclusive(&pongs_lock);
+}
+
+static void send_pongs(void)
+{
+    struct pong out[PONG_QUEUE];
+    AcquireSRWLockExclusive(&pongs_lock);
+    int n = npongs;
+    memcpy(out, pongs, n * sizeof *out);
+    npongs = 0;
+    ReleaseSRWLockExclusive(&pongs_lock);
+    for (int i = 0; i < n; i++)
+        send_msg(out[i].id, 2, out[i].seq, out[i].t);
+}
+
 static void read_pings(uint64_t now)
 {
     uint32_t size;
@@ -145,7 +177,7 @@ static void read_pings(uint64_t now)
         if (size != sizeof m)
             m.pid = 0;
         if (m.type == 1)
-            send_msg(from, 2, m.seq, m.t);
+            queue_pong(from, m.seq, m.t);
         m.name[17] = 0;
         AcquireSRWLockExclusive(&peers_lock);
         for (int i = 0; i < MAX_PEERS; i++) {
@@ -323,20 +355,32 @@ DWORD WINAPI ping_thread(LPVOID unused)
     return 0;
 }
 
-// Runs inside the game's own IsP2PPacketAvailable calls. Proton's steamclient crashes when a second thread
-// uses ISteamNetworking at the same time, so pings never get a thread of their own.
-void ping_pump(void)
+// Runs inside the game's own ReadP2PPacket calls. Proton's steamclient crashes when threads overlap on
+// ISteamNetworking, so pings have no thread of their own and each call type stays on the game's thread for it.
+void ping_pump_read(void)
 {
     static volatile LONG busy;
-    static uint64_t read_ms, tick_ms, loss_ms;
+    static uint64_t read_ms;
+    if (!ping_ready || !net_self || InterlockedCompareExchange(&busy, 1, 0))
+        return;
+    uint64_t now = now_ms();
+    // Read at most every 2 ms: a slow poll on either side adds its wait to the round trip.
+    if (now - read_ms >= 2)
+        read_pings(now), read_ms = now;
+    InterlockedExchange(&busy, 0);
+}
+
+// Runs inside the game's own SendP2PPacket calls, the only place pings and pongs go out.
+void ping_pump_send(void)
+{
+    static volatile LONG busy;
+    static uint64_t tick_ms, loss_ms;
     if (!ping_ready || !net_self || InterlockedCompareExchange(&busy, 1, 0))
         return;
     uint64_t now = now_ms();
     if (!loss_ms)
         loss_ms = now;
-    // Read at most every 2 ms: a slow poll on either side adds its wait to the round trip.
-    if (now - read_ms >= 2)
-        read_pings(now), read_ms = now;
+    send_pongs();
     if (now - tick_ms >= 100)
         tick(now, &loss_ms), tick_ms = now;
     InterlockedExchange(&busy, 0);

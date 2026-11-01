@@ -355,6 +355,7 @@ typedef bool (*P2PState_t)(void *, uint64_t, uint8_t *);
 
 static bool nk_send(void *self, uint64_t id, const void *data, uint32_t len, int type, int channel)
 {
+    ping_pump_send();
     if (!EMU_ID(id)) {
         ping_seen(self, net_orig, id, data, len, channel, false);
         return ((P2PSend_t)net_orig[0])(self, id, data, len, type, channel);
@@ -374,7 +375,6 @@ static bool nk_send(void *self, uint64_t id, const void *data, uint32_t len, int
 
 static bool nk_avail(void *self, uint32_t *size, int channel)
 {
-    ping_pump();
     if (channel == EMU_CHANNEL && EMU_ON) {
         EnterCriticalSection(&emu_lock);
         emu_pump();
@@ -390,6 +390,7 @@ static bool nk_avail(void *self, uint32_t *size, int channel)
 
 static bool nk_read(void *self, void *dest, uint32_t cap, uint32_t *size, uint64_t *remote, int channel)
 {
+    ping_pump_read();
     if (channel == EMU_CHANNEL && EMU_ON) {
         EnterCriticalSection(&emu_lock);
         emu_pump();

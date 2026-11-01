@@ -1,5 +1,5 @@
 // Run marker: rekindle_active_run.txt holds the multi_game_id of the run in progress. GetMultiGameID sets it and
-// GetResultData (the run ended) clears it. A quit only sends DeleteSession, so the run stays restorable.
+// a win (Leave with phase GAME_CLEAR) or GetResultData (the run ended) clears it. A quit only sends DeleteSession, so the run stays restorable.
 #include "rekindle.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -193,6 +193,9 @@ void run_marker_http(const void *data, size_t n)
         unsigned long long m = strtoull((const char *)p + 17, NULL, 10);
         if (m)
             set_marker(path, m);
+    } else if (find_bytes(s, n, "\"RequestLeaveMultiplayParams\"") && find_bytes(s, n, "\"phase\":\"GAME_CLEAR\"")) {
+        // The win is on the server now; a crash before the result screen must not restore the finished run.
+        clear_marker("game clear");
     } else if (find_bytes(s, n, "\"RequestKillBossLogParams\"") && find_bytes(s, n, "\"is_kill_boss\":true")) {
         // The same event with false means the fight ended and the boss lived.
         snapshot_boss_killed();
