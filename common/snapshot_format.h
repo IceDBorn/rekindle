@@ -5,6 +5,9 @@
 #define RUN_FILE "rekindle_run_%llu.bin"
 #define RUN_TMP_FILE "rekindle_run.tmp"
 #define RUN_STATE_FILE "rekindle_run_%llu.state"
+// The last snapshot from before the day 2 boss died, used if a restore past that point fails.
+#define RUN_PRE_DAY3_FILE "rekindle_run_%llu.pre_day3.bin"
+#define RUN_PRE_DAY3_STATE_FILE "rekindle_run_%llu.pre_day3.state"
 #define RUN_STATE_TMP_FILE "rekindle_run_state.tmp"
 #define ACTIVE_RUN_FILE "rekindle_active_run.txt"
 #define MATES_FILE "rekindle_mates.txt"

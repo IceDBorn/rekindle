@@ -404,6 +404,32 @@ void snapshot_boss_killed(void)
     InterlockedExchange(&boss_killed, 1);
 }
 
+// Fails harmlessly once the copy exists, so it stays the last snapshot from before the room.
+static void keep_pre_day3(uint64_t mgid)
+{
+    char from[MAX_PATH], to[MAX_PATH];
+    mod_path(from, RUN_FILE, (unsigned long long)mgid);
+    mod_path(to, RUN_PRE_DAY3_FILE, (unsigned long long)mgid);
+    if (!CopyFileA(from, to, TRUE))
+        return;
+    mod_path(from, RUN_STATE_FILE, (unsigned long long)mgid);
+    mod_path(to, RUN_PRE_DAY3_STATE_FILE, (unsigned long long)mgid);
+    CopyFileA(from, to, FALSE);
+}
+
+void snapshot_use_pre_day3(uint64_t mgid)
+{
+    char from[MAX_PATH], to[MAX_PATH];
+    mod_path(from, RUN_PRE_DAY3_FILE, (unsigned long long)mgid);
+    mod_path(to, RUN_FILE, (unsigned long long)mgid);
+    if (!MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING))
+        return;
+    mod_path(from, RUN_PRE_DAY3_STATE_FILE, (unsigned long long)mgid);
+    mod_path(to, RUN_STATE_FILE, (unsigned long long)mgid);
+    MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING);
+    log_line(LOG_INFO, "next restore uses the snapshot from before the day 2 boss died");
+}
+
 static void hook_sync_update(void *mgr, float dt)
 {
     if (!InterlockedExchange(&sync_tick_seen, 1))
@@ -459,10 +485,11 @@ static void hook_sync_update(void *mgr, float dt)
         uint8_t *gb = (uint8_t *)GetModuleHandleA(NULL);
         // A restore lands before the boss phase with stop_before_boss_ms left for the teammates to join.
         int64_t eta = boss_eta_ms(gb, now);
-        bool phase = boss_phase(gb), b = phase || (eta >= 0 && (uint64_t)eta < stop_before_boss_ms);
+        bool phase = boss_phase(gb), room = day3_room(gb, now);
+        bool b = !room && (phase || (eta >= 0 && (uint64_t)eta < stop_before_boss_ms));
         // One snapshot per field boss kill. A restore after a day boss's death never starts the next day.
         bool kill = boss_killed && InterlockedExchange(&boss_killed, 0) && !b && !day3_started(gb);
-        // The first snapshot after a boss phase (the next day) runs at once.
+        // The first snapshot after a boss phase (the next day, or the day 3 room) runs at once.
         if (b != boss && !b)
             last_auto_ms = 0;
         if (b != boss)
@@ -472,6 +499,8 @@ static void hook_sync_update(void *mgr, float dt)
             last_auto_ms = unix_ms();
             if (kill)
                 log_line(LOG_INFO, "snapshot at boss kill");
+            if (room && run_mgid)
+                keep_pre_day3(run_mgid);
             take_snapshot();
             streaming = snap_id_count > 0;
         }

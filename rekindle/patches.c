@@ -23,12 +23,13 @@ DWORD WINAPI startup_patches(LPVOID unused)
     static const uint8_t down_new[] = {0x84,0xc0,0xeb,0x07,0x80,0x8b,0xc2,0x00,0x00,0x00,0x01,0x48,0x8b,0x3d};
     bool afk = cfg("penalties", "remove_afk_kick", 1), pen = cfg("penalties", "remove_rejoin_penalty", 1);
     bool m = !afk, k = !afk, p1 = !pen, p2 = !pen, d = !cfg("penalties", "respawn_if_downed", 1);
+    uintptr_t base = (uintptr_t)GetModuleHandleA(NULL);
     for (int i = 0; i < 1200 && !(m && k && p1 && p2 && d); i++, Sleep(250)) {
-        m = m || patch_bytes(0x1403ba2cf, move_old, move_new, sizeof move_old);
-        k = k || patch_bytes(0x1403ba34a, kick_old, kick_new, sizeof kick_old);
-        p1 = p1 || patch_bytes(0x140c3f2d8, pen1_old, pen1_new, sizeof pen1_old);
-        p2 = p2 || patch_bytes(0x140c3f4de, pen2_old, pen2_new, sizeof pen2_old);
-        d = d || patch_bytes(0x140c3fabc, down_old, down_new, sizeof down_old);
+        m = m || patch_bytes(base + 0x3ba2cf, move_old, move_new, sizeof move_old);
+        k = k || patch_bytes(base + 0x3ba34a, kick_old, kick_new, sizeof kick_old);
+        p1 = p1 || patch_bytes(base + 0xc3f2d8, pen1_old, pen1_new, sizeof pen1_old);
+        p2 = p2 || patch_bytes(base + 0xc3f4de, pen2_old, pen2_new, sizeof pen2_old);
+        d = d || patch_bytes(base + 0xc3fabc, down_old, down_new, sizeof down_old);
     }
     note(LOG_INFO, "Startup patches afk=%d/%d penalty=%d/%d downed=%d settings=%d%d%d", m, k, p1, p2, d, afk, pen,
          cfg("penalties", "respawn_if_downed", 1));
@@ -57,13 +58,14 @@ void keep_online(bool on)
 {
     static const uint8_t lost[] = {0x48, 0x8b, 0x05, 0x34, 0x68, 0x0a, 0x03, 0xc6, 0x40, 0x13};
     static const uint8_t owner[] = {0x48, 0x8b, 0x05, 0xc5, 0xdc, 0xe0, 0x02, 0xc6, 0x40, 0x14};
-    if (!patch_reason(0x140b5de6d, lost, on)) {
-        note(LOG_ERROR, "Keep online: patch bytes mismatch at 0x140b5de6d");
+    uintptr_t base = (uintptr_t)GetModuleHandleA(NULL);
+    if (!patch_reason(base + 0xb5de6d, lost, on)) {
+        note(LOG_ERROR, "Keep online: patch bytes mismatch at +0xb5de6d");
         return;
     }
-    bool o = patch_reason(0x140df69dc, owner, on);
+    bool o = patch_reason(base + 0xdf69dc, owner, on);
     if (!o)
-        note(LOG_ERROR, "Keep online: patch bytes mismatch at 0x140df69dc");
+        note(LOG_ERROR, "Keep online: patch bytes mismatch at +0xdf69dc");
     keep_online_ok = on;
     note(LOG_INFO, "Keep online %d owner=%d", on, o);
 }

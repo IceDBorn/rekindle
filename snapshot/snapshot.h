@@ -34,6 +34,7 @@ void apply_restore_clock(void);
 void restore_day(uint8_t *base, int day);
 bool boss_phase(uint8_t *base);
 bool day3_started(uint8_t *base);
+bool day3_room(uint8_t *base, uint64_t now);
 int64_t boss_eta_ms(uint8_t *base, uint64_t now);
 void world_probe(uint8_t *base);
 uint32_t player_tile(uint8_t *base);
@@ -56,6 +57,7 @@ void fix_graces(uint8_t *base);
 void take_enemies(uint8_t *base);
 void boss_probe(uint8_t *base);
 void party_probe(uint8_t *base);
+bool big_enemy_hurt(uint8_t *base);
 void queue_enemy_hp(const uint8_t *d, uint32_t l);
 void restore_enemies(uint8_t *base, uint64_t now);
 

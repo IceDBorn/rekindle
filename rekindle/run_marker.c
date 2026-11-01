@@ -162,6 +162,7 @@ void marker_rejoin_failed(void)
         return;
     }
     write_marker(path, mgid, tries);
+    snapshot_use_pre_day3(mgid);
     note(LOG_INFO, "Rejoin failed %d of %d, run marker kept", tries, REJOIN_TRIES);
     // This launch is out of the run; the files stay for the next one.
     run_mgid = 0, run_lobby = 0;

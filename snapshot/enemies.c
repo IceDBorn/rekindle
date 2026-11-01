@@ -35,8 +35,19 @@ void take_enemies(uint8_t *base)
     log_line(LOG_INFO, "enemies damaged=%d", n);
 }
 
+#define BIG_ENEMY_MAX_HP 2000
+bool big_enemy_hurt(uint8_t *base)
+{
+    uint8_t *wcm = *(uint8_t **)(base + WORLD_CHR_MAN_RVA);
+    for (uint8_t **c = wcm ? *(uint8_t ***)(wcm + 0x17b98) : NULL, **end = wcm ? *(uint8_t ***)(wcm + 0x17ba0) : NULL; c && c < end; c++) {
+        int32_t *hp = *c && *(uintptr_t *)*c == (uintptr_t)(base + ENEMY_VT) ? enemy_hp_of(*c) : NULL;
+        if (hp && hp[1] >= BIG_ENEMY_MAX_HP && hp[0] < hp[1])
+            return true;
+    }
+    return false;
+}
+
 // PROBE: logs when a big enemy appears, first takes damage, dies and unloads, to date boss deaths and fight starts.
-#define PROBE_MIN_MAX_HP 2000
 void boss_probe(uint8_t *base)
 {
     static struct { uint64_t handle; int32_t npc, hp, max; bool hurt, dead, seen; } big[64];
@@ -47,7 +58,7 @@ void boss_probe(uint8_t *base)
         big[i].seen = false;
     for (uint8_t **c = *(uint8_t ***)(wcm + 0x17b98), **end = *(uint8_t ***)(wcm + 0x17ba0); c && c < end; c++) {
         int32_t *hp = *c && *(uintptr_t *)*c == (uintptr_t)(base + ENEMY_VT) ? enemy_hp_of(*c) : NULL;
-        if (!hp || hp[1] < PROBE_MIN_MAX_HP)
+        if (!hp || hp[1] < BIG_ENEMY_MAX_HP)
             continue;
         uint64_t h = *(uint64_t *)(*c + 8);
         int32_t npc = *(int32_t *)(*c + 0x68);

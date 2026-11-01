@@ -64,6 +64,39 @@ bool day3_started(uint8_t *base)
     return w && w[0x154] == 0xff;
 }
 
+// True while waiting in the room off the overworld (map 0x3c) before the day 3 boss. Leaving the room's tile or
+// a hurt big enemy starts the fight. The wait lets the room load and the day 2 boss unload.
+#define ROOM_SETTLE_MS 5000
+bool day3_room(uint8_t *base, uint64_t now)
+{
+    static uint64_t since_ms;
+    static uint32_t room;
+    static bool fought;
+    uint8_t *w = *(uint8_t **)(base + WORLD_AREA_TIME_RVA);
+    if (!w || !boss_phase(base) || w[0x154] != 0xff) {
+        room = 0, fought = false;
+        return false;
+    }
+    uint32_t tile = player_tile(base);
+    if (fought)
+        return false;
+    if (!room) {
+        if (tile != 0xffffffff && tile >> 24 != 0x3c) {
+            room = tile, since_ms = now;
+            log_line(LOG_INFO, "day 3 room tile=%08x", tile);
+        }
+        return false;
+    }
+    if (now - since_ms < ROOM_SETTLE_MS)
+        return false;
+    if ((tile != 0xffffffff && tile != room) || big_enemy_hurt(base)) {
+        fought = true;
+        log_line(LOG_INFO, "day 3 boss started tile=%08x", tile);
+        return false;
+    }
+    return true;
+}
+
 // Real ms until the day clock stops, from its rate over the last 5 s or more (storm speed and skips included);
 // -1 while the rate is unknown.
 int64_t boss_eta_ms(uint8_t *base, uint64_t now)
