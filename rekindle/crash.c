@@ -1,7 +1,25 @@
 #include "rekindle.h"
 #include <stdio.h>
+#include <string.h>
 
-// Logs fatal-looking exceptions with exe RVAs found on the stack, since the game exits without a dialog.
+// "module+0xoffset" for an address inside a loaded module, the bare address otherwise.
+static void where(char *out, size_t cap, uintptr_t a)
+{
+    HMODULE m;
+    char path[MAX_PATH];
+    if (a > 0x10000 &&
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)a, &m) &&
+        GetModuleFileNameA(m, path, sizeof path)) {
+        const char *b = strrchr(path, '\\');
+        snprintf(out, cap, "%s+0x%llx", b ? b + 1 : path, (unsigned long long)(a - (uintptr_t)m));
+    } else {
+        snprintf(out, cap, "0x%llx", (unsigned long long)a);
+    }
+}
+
+// Logs fatal-looking exceptions, since the game exits without a dialog. It runs before any handler, so a line can
+// also come from an exception the game handles and survives.
 LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep)
 {
     static volatile LONG count;
@@ -15,9 +33,10 @@ LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep)
     uintptr_t size = ((IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew))->OptionalHeader.SizeOfImage;
     CONTEXT *c = ep->ContextRecord;
     uintptr_t ip = (uintptr_t)ep->ExceptionRecord->ExceptionAddress;
-    char line[2048];
-    int n = snprintf(line, sizeof line, "CRASH code=%08lx ip=%p rva=0x%llx addr=%p rcx=%llx rdx=%llx rax=%llx", code,
-                     (void *)ip, (unsigned long long)(ip - base < size ? ip - base : 0),
+    char line[4096], at[MAX_PATH + 24];
+    where(at, sizeof at, ip);
+    int n = snprintf(line, sizeof line, "CRASH code=%08lx at=%s ip=%p tid=%lu addr=%p rcx=%llx rdx=%llx rax=%llx",
+                     code, at, (void *)ip, GetCurrentThreadId(),
                      (void *)ep->ExceptionRecord->ExceptionInformation[1], (unsigned long long)c->Rcx,
                      (unsigned long long)c->Rdx, (unsigned long long)c->Rax);
 #define ADD(...) (n += n < (int)sizeof line ? snprintf(line + n, sizeof line - n, __VA_ARGS__) : 0)
@@ -27,7 +46,8 @@ LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep)
     for (int i = 0; i < 24 && u.Rip; i++) {
         DWORD64 ib;
         PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(u.Rip, &ib, NULL);
-        ADD(" 0x%llx", (unsigned long long)(u.Rip - base < size ? u.Rip - base : u.Rip));
+        where(at, sizeof at, u.Rip);
+        ADD(" %s", at);
         if (!fn)
             break;
         void *hd;

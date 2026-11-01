@@ -76,20 +76,42 @@ int64_t boss_eta_ms(uint8_t *base, uint64_t now)
     return rate > 0 ? (int64_t)((23 * 3600 + 59 * 60 + 59 - c) / rate) : -1;
 }
 
-// PROBE: logs day, clock and map area changes, to find what day 3 looks like before and during its boss.
+// PROBE: logs WorldAreaTime words that change, skipping the clock. A word goes quiet after 3 changes until the
+// day or boss phase changes, so timers show around each transition without filling the log.
+static void area_time_probe(uint8_t *w, bool transition)
+{
+    static uint8_t *last_w;
+    static uint32_t last[0x80];
+    static uint8_t changes[0x80];
+    uint32_t *now = (uint32_t *)w;
+    if (transition)
+        memset(changes, 0, sizeof changes);
+    for (int i = 0; last_w == w && i < 0x80; i++)
+        if (now[i] != last[i] && i != 0x100 / 4 && i != 0x104 / 4 && changes[i] < 3) {
+            changes[i]++;
+            log_line(LOG_DEBUG, "probe area-time +0x%03x %08x -> %08x", i * 4, last[i], now[i]);
+        }
+    last_w = w;
+    memcpy(last, now, sizeof last);
+}
+
+// PROBE: logs day, clock and map tile changes, to find what day 3 looks like before and during its boss.
 void world_probe(uint8_t *base)
 {
     uint8_t *w = *(uint8_t **)(base + WORLD_AREA_TIME_RVA);
     static int last_day = -1, last_stop = -1;
-    static uint32_t last_area = 0xffffffff;
+    static uint32_t last_tile = 0xffffffff;
+    boss_probe(base);
     if (!w)
         return;
     uint64_t q = *(uint64_t *)(w + 0x100);
-    uint32_t tile = player_tile(base), area = tile >> 24;
+    uint32_t tile = player_tile(base);
     int stop = boss_phase(base);
-    if (w[0x156] == last_day && stop == last_stop && (area == last_area || tile == 0xffffffff))
+    bool transition = w[0x156] != last_day || stop != last_stop;
+    area_time_probe(w, transition);
+    if (!transition && (tile == last_tile || tile == 0xffffffff))
         return;
-    last_day = w[0x156], last_stop = stop, last_area = tile == 0xffffffff ? last_area : area;
-    log_line(LOG_INFO, "probe world day=%d clock=%02d:%02d:%02d tile=%08x", w[0x156], (int)((q >> 34) & 31),
+    last_day = w[0x156], last_stop = stop, last_tile = tile == 0xffffffff ? last_tile : tile;
+    log_line(LOG_INFO, "probe world day=%d stop=%d clock=%02d:%02d:%02d tile=%08x", w[0x156], stop, (int)((q >> 34) & 31),
              (int)((q >> 39) & 63), (int)((q >> 45) & 63), tile);
 }

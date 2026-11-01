@@ -11,7 +11,7 @@ static char log_path[MAX_PATH];
 static FILE *out;
 static bool log_failed;
 
-// Needs mod_dir_init first. The log only holds this launch: an old one is removed even when nothing gets written.
+// Needs mod_dir_init first. Keeps the last ten launches: the log is this one, .1 the one before, up to .9.
 void log_init(const char *file)
 {
     char ini[MAX_PATH], v[16];
@@ -23,10 +23,18 @@ void log_init(const char *file)
         if (!_stricmp(v, level_names[i]))
             log_level = i;
     mod_path(log_path, "%s", file);
-    // The last session's log survives one relaunch, so a crash log is not lost to an immediate restart.
-    char prev[MAX_PATH + 8];
-    snprintf(prev, sizeof prev, "%s.prev", log_path);
-    MoveFileExA(log_path, prev, MOVEFILE_REPLACE_EXISTING);
+    char from[MAX_PATH + 8], to[MAX_PATH + 8];
+    for (int i = 9; i > 0; i--) {
+        snprintf(from, sizeof from, i > 1 ? "%s.%d" : "%s", log_path, i - 1);
+        snprintf(to, sizeof to, "%s.%d", log_path, i);
+        MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING);
+    }
+    snprintf(from, sizeof from, "%s.prev", log_path);
+    DeleteFileA(from);
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    log_line(LOG_INFO, "Log started %04d-%02d-%02d pid=%lu level=%s", st.wYear, st.wMonth, st.wDay,
+             GetCurrentProcessId(), level_names[log_level]);
 }
 
 // Takes the lock and writes the line prefix; returns NULL with the lock released when nothing is logged.

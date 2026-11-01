@@ -125,6 +125,58 @@ void clear_marker(const char *why)
     hub_marker_cleared();
 }
 
+// The marker file is "<mgid> <failed rejoins>". A rejoin that lands in the Roundtable looks the same as a run that
+// ended while away, so the marker survives until the third failure in a row.
+#define REJOIN_TRIES 3
+
+static int marker_tries(char *path, unsigned long long *mgid)
+{
+    int tries = 0;
+    *mgid = 0;
+    mod_path(path, ACTIVE_RUN_FILE);
+    FILE *f = fopen(path, "r");
+    if (f) {
+        if (fscanf(f, "%llu %d", mgid, &tries) < 2)
+            tries = 0;
+        fclose(f);
+    }
+    return tries;
+}
+
+static void write_marker(const char *path, unsigned long long mgid, int tries)
+{
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fprintf(f, tries ? "%llu %d\n" : "%llu\n", mgid, tries);
+        fclose(f);
+    }
+}
+
+void marker_rejoin_failed(void)
+{
+    char path[MAX_PATH];
+    unsigned long long mgid;
+    int tries = marker_tries(path, &mgid) + 1;
+    if (!mgid || tries >= REJOIN_TRIES) {
+        clear_marker("run gone");
+        return;
+    }
+    write_marker(path, mgid, tries);
+    note(LOG_INFO, "Rejoin failed %d of %d, run marker kept", tries, REJOIN_TRIES);
+    // This launch is out of the run; the files stay for the next one.
+    run_mgid = 0, run_lobby = 0;
+    memset(run_mates, 0, sizeof run_mates), memset(run_pids, 0, sizeof run_pids);
+    hub_marker_cleared();
+}
+
+void marker_rejoined(void)
+{
+    char path[MAX_PATH];
+    unsigned long long mgid;
+    if (marker_tries(path, &mgid) && mgid)
+        write_marker(path, mgid, 0);
+}
+
 void run_marker_http(const void *data, size_t n)
 {
     const uint8_t *s = data, *p;

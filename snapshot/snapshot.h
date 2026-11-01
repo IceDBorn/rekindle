@@ -53,6 +53,7 @@ int run_number_for(uint64_t id, int current);
 int recorded_number(uint64_t id);
 void fix_graces(uint8_t *base);
 void take_enemies(uint8_t *base);
+void boss_probe(uint8_t *base);
 void queue_enemy_hp(const uint8_t *d, uint32_t l);
 void restore_enemies(uint8_t *base, uint64_t now);
 

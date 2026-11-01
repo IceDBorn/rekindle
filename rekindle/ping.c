@@ -46,6 +46,7 @@ static SRWLOCK peers_lock = SRWLOCK_INIT;
 static void *volatile net_self;
 static void **net_vt;
 static bool show_ping = true, show_loss = true, hud_on = true, over_on;
+static volatile bool ping_ready;
 static double qpc_per_ms = 1;
 
 typedef bool (*Send_t)(void *, uint64_t, const void *, uint32_t, int, int);
@@ -307,6 +308,7 @@ DWORD WINAPI ping_thread(LPVOID unused)
     LARGE_INTEGER f;
     QueryPerformanceFrequency(&f);
     qpc_per_ms = f.QuadPart / 1000.0;
+    ping_ready = true;
     real_set_ui_text = (SetUiText_t)(base + SET_UI_TEXT_RVA);
     // The code is only readable as plain x86 once the game has unpacked it. Pings are answered either way.
     for (int i = 0; (show_ping || show_loss) && i < 1200; i++, Sleep(250))
@@ -318,13 +320,24 @@ DWORD WINAPI ping_thread(LPVOID unused)
                  show_loss);
             break;
         }
-    // Read every 2 ms: a slow poll on either side adds its wait to the round trip.
-    for (uint64_t loss_ms = now_ms(), tick_ms = 0;; Sleep(2)) {
-        if (!net_self)
-            continue;
-        uint64_t now = now_ms();
-        read_pings(now);
-        if (now - tick_ms >= 100)
-            tick(now, &loss_ms), tick_ms = now;
-    }
+    return 0;
+}
+
+// Runs inside the game's own IsP2PPacketAvailable calls. Proton's steamclient crashes when a second thread
+// uses ISteamNetworking at the same time, so pings never get a thread of their own.
+void ping_pump(void)
+{
+    static volatile LONG busy;
+    static uint64_t read_ms, tick_ms, loss_ms;
+    if (!ping_ready || !net_self || InterlockedCompareExchange(&busy, 1, 0))
+        return;
+    uint64_t now = now_ms();
+    if (!loss_ms)
+        loss_ms = now;
+    // Read at most every 2 ms: a slow poll on either side adds its wait to the round trip.
+    if (now - read_ms >= 2)
+        read_pings(now), read_ms = now;
+    if (now - tick_ms >= 100)
+        tick(now, &loss_ms), tick_ms = now;
+    InterlockedExchange(&busy, 0);
 }

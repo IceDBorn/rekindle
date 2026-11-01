@@ -72,6 +72,7 @@ static inline uint16_t get_be16(const uint8_t *p) { return (uint16_t)(p[0] << 8 
 extern void *friends_self, **friends_orig;
 void ping_seen(void *self, void **vt, uint64_t id, const uint8_t *d, uint32_t n, int channel, bool incoming);
 DWORD WINAPI ping_thread(LPVOID unused);
+void ping_pump(void);
 
 // hub.c: party members see each other in the Roundtable Hold.
 DWORD WINAPI hub_thread(LPVOID unused);

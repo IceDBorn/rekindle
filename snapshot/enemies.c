@@ -35,6 +35,51 @@ void take_enemies(uint8_t *base)
     log_line(LOG_INFO, "enemies damaged=%d", n);
 }
 
+// PROBE: logs when a big enemy appears, first takes damage, dies and unloads, to date boss deaths and fight starts.
+#define PROBE_MIN_MAX_HP 2000
+void boss_probe(uint8_t *base)
+{
+    static struct { uint64_t handle; int32_t npc, hp, max; bool hurt, dead, seen; } big[64];
+    uint8_t *wcm = *(uint8_t **)(base + WORLD_CHR_MAN_RVA);
+    if (!wcm)
+        return;
+    for (int i = 0; i < 64; i++)
+        big[i].seen = false;
+    for (uint8_t **c = *(uint8_t ***)(wcm + 0x17b98), **end = *(uint8_t ***)(wcm + 0x17ba0); c && c < end; c++) {
+        int32_t *hp = *c && *(uintptr_t *)*c == (uintptr_t)(base + ENEMY_VT) ? enemy_hp_of(*c) : NULL;
+        if (!hp || hp[1] < PROBE_MIN_MAX_HP)
+            continue;
+        uint64_t h = *(uint64_t *)(*c + 8);
+        int32_t npc = *(int32_t *)(*c + 0x68);
+        int i = 0, free_slot = -1;
+        for (; i < 64 && !(big[i].handle == h && big[i].npc == npc); i++)
+            if (free_slot < 0 && !big[i].handle)
+                free_slot = i;
+        if (i == 64) {
+            if (free_slot < 0)
+                continue;
+            i = free_slot;
+            big[i].handle = h, big[i].npc = npc, big[i].hurt = big[i].dead = false;
+            log_line(LOG_DEBUG, "probe big-enemy appear npc=%d handle=%016llx hp=%d/%d", npc, (unsigned long long)h, hp[0], hp[1]);
+        }
+        big[i].seen = true, big[i].hp = hp[0], big[i].max = hp[1];
+        if (!big[i].hurt && hp[0] < hp[1]) {
+            big[i].hurt = true;
+            log_line(LOG_DEBUG, "probe big-enemy hurt npc=%d handle=%016llx hp=%d/%d", npc, (unsigned long long)h, hp[0], hp[1]);
+        }
+        if (!big[i].dead && hp[0] <= 0) {
+            big[i].dead = true;
+            log_line(LOG_DEBUG, "probe big-enemy dead npc=%d handle=%016llx max=%d", npc, (unsigned long long)h, hp[1]);
+        }
+    }
+    for (int i = 0; i < 64; i++)
+        if (big[i].handle && !big[i].seen) {
+            log_line(LOG_DEBUG, "probe big-enemy gone npc=%d handle=%016llx hp=%d/%d", big[i].npc,
+                     (unsigned long long)big[i].handle, big[i].hp, big[i].max);
+            big[i].handle = 0;
+        }
+}
+
 void queue_enemy_hp(const uint8_t *d, uint32_t l)
 {
     if (l % sizeof(struct enemy_hp))

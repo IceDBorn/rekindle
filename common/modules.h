@@ -9,6 +9,10 @@ extern uint64_t run_mgid;
 extern uint64_t fake_self;
 // run_marker.c: the run is over; drops the marker and the mate list.
 void clear_marker(const char *why);
+// run_marker.c: a restore ended in the Roundtable; the marker is dropped only after the third time in a row.
+void marker_rejoin_failed(void);
+// run_marker.c: a restore got back into the run, so the failed rejoin count starts over.
+void marker_rejoined(void);
 
 // snapshot/main.c: reads the settings and waits for Steam networking on its own thread.
 void snapshot_start(void);

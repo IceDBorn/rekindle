@@ -423,14 +423,19 @@ static void hook_sync_update(void *mgr, float dt)
             log_line(LOG_INFO, "restore mgid=%llu ended in the Roundtable", (unsigned long long)restoring_mgid);
             restoring_mgid = 0;
             relay_abandon();
-            clear_marker("run gone");
+            marker_rejoin_failed();
         } else {
+            marker_rejoined();
             restore_snapshot(restoring_mgid);
             if (boss_drops)
                 restore_player_number((uint8_t *)GetModuleHandleA(NULL), ses);
             relay_ready();
         }
     }
+    // Outside the snapshot block: an online snapshot streams for up to 20 s.
+    static uint64_t last_probe_ms;
+    if (now - last_probe_ms > 1000)
+        last_probe_ms = now, world_probe((uint8_t *)GetModuleHandleA(NULL));
     static uint64_t last_grace_ms;
     if (graces && items_restored && now - last_grace_ms > 1000)
         last_grace_ms = now, fix_graces((uint8_t *)GetModuleHandleA(NULL));
@@ -444,10 +449,7 @@ static void hook_sync_update(void *mgr, float dt)
         uint8_t *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
         bool hub = gdm && gdm[0xdc] == 1 && !run_mgid;
         static bool boss;
-        static uint64_t last_probe_ms;
         uint8_t *gb = (uint8_t *)GetModuleHandleA(NULL);
-        if (now - last_probe_ms > 1000)
-            last_probe_ms = now, world_probe(gb);
         // A restore lands before the boss phase with stop_before_boss_ms left for the teammates to join.
         int64_t eta = boss_eta_ms(gb, now);
         bool phase = boss_phase(gb), b = phase || (eta >= 0 && (uint64_t)eta < stop_before_boss_ms);

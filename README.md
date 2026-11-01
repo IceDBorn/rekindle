@@ -6,7 +6,7 @@ It works for solo runs and co-op runs, after a crash or a quit to the desktop or
 
 ## How it works
 
-- During a run, Rekindle writes a snapshot of the host's world every 30 seconds to `rekindle_run_<multi_game_id>.bin`. A snapshot is what the game would send a player joining at that moment. `rekindle_active_run.txt` names the run in progress, and only the end of the run clears it, so a quit keeps the run restorable. `rekindle_mates.txt` lists the teammates and the run's Steam lobby.
+- During a run, Rekindle writes a snapshot of the host's world every 30 seconds to `rekindle_run_<multi_game_id>.bin`. A snapshot is what the game would send a player joining at that moment. `rekindle_active_run.txt` names the run in progress, and only the end of the run clears it, so a quit keeps the run restorable. A restore that lands in the Roundtable instead of the run counts as a failed rejoin, and the marker is dropped after three in a row. `rekindle_mates.txt` lists the teammates and the run's Steam lobby.
 - On the next launch, if a run was still in progress, Rekindle adds a rejoin record to `NR0000.sl2`, so the game offers to resume the run. It backs up the save to `NR0000.sl2.pre_restore` first.
 - In co-op, the restore first checks the run's lobby. If a teammate is still in the run, the game rejoins them as usual.
 - The rejoin goes to a fake lobby. A fake host answers the game's P2P link with the snapshot, then leaves like a crashed host, and the player keeps the run as its new host.
@@ -28,7 +28,7 @@ path = "dll/rekindle.dll"
 load_early = true
 ```
 
-Rekindle reads `rekindle.ini` from the folder that holds the DLL and writes its data files and `rekindle.log` there too. Missing keys keep their defaults. If `rekindle.ini` is missing, Rekindle writes one with the defaults at launch.
+Rekindle reads `rekindle.ini` from the folder that holds the DLL and writes its data files and `rekindle.log` there too. Missing keys keep their defaults. If `rekindle.ini` is missing, Rekindle writes one with the defaults at launch. The logs of the last ten launches stay as `rekindle.log` (this launch) and `rekindle.log.1` to `rekindle.log.9`.
 
 The game addresses are for one build of `nightreign.exe`. A game update can break Rekindle until the addresses are updated.
 

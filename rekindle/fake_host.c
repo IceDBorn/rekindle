@@ -374,6 +374,7 @@ static bool nk_send(void *self, uint64_t id, const void *data, uint32_t len, int
 
 static bool nk_avail(void *self, uint32_t *size, int channel)
 {
+    ping_pump();
     if (channel == EMU_CHANNEL && EMU_ON) {
         EnterCriticalSection(&emu_lock);
         emu_pump();
