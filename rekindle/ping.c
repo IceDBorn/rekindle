@@ -23,7 +23,8 @@
 
 struct peer {
     uint64_t id, seen_ms, next_ping_ms, pong_ms, name_ms, text_ms;
-    uint32_t rtt[5], rtt_n, ping_seq, got, loss_tenths;
+    uint32_t rtt[5], rtt_n, ping_seq, got, loss_tenths, steam_ping;
+    uint64_t steam_ms;
     uint16_t seq_next, seq_start;
     bool seq_on;
     wchar_t name[64], game_name[18], extra[32];
@@ -225,7 +226,10 @@ static void build_text(struct peer *p, uint64_t now)
 {
     int n = 0;
     p->extra[0] = 0;
-    if (show_ping && p->rtt_n && now - p->pong_ms < PONG_TTL_MS)
+    // Steam's session ping is the network round trip; the pongs also wait up to a frame on each side.
+    if (show_ping && p->steam_ms && now - p->steam_ms < PONG_TTL_MS)
+        n += swprintf(p->extra + n, 32 - n, L"  %ums", p->steam_ping);
+    else if (show_ping && p->rtt_n && now - p->pong_ms < PONG_TTL_MS)
         n += swprintf(p->extra + n, 32 - n, L"  %ums", median_rtt(p));
     if (show_loss && p->loss_tenths >= 10)
         swprintf(p->extra + n, 32 - n, L"  %u%%", (p->loss_tenths + 5) / 10);
@@ -384,4 +388,29 @@ void ping_pump_send(void)
     if (now - tick_ms >= 100)
         tick(now, &loss_ms), tick_ms = now;
     InterlockedExchange(&busy, 0);
+}
+
+// Teammates the game exchanged packets with in the last PEER_TTL_MS, without the fake host.
+int ping_peer_ids(uint64_t *out, int max)
+{
+    int n = 0;
+    uint64_t now = now_ms();
+    AcquireSRWLockShared(&peers_lock);
+    bool fake = run_restored && !host_gone;
+    for (int i = 0; i < MAX_PEERS && n < max; i++)
+        if (peers[i].id && now - peers[i].seen_ms <= PEER_TTL_MS && !(fake && peers[i].id == fake_host))
+            out[n++] = peers[i].id;
+    ReleaseSRWLockShared(&peers_lock);
+    return n;
+}
+
+// The ping of a connected Steam session to a teammate, from sessions.c.
+void ping_steam(uint64_t id, uint32_t ms)
+{
+    uint64_t now = now_ms();
+    AcquireSRWLockExclusive(&peers_lock);
+    for (int i = 0; i < MAX_PEERS; i++)
+        if (peers[i].id == id)
+            peers[i].steam_ping = ms, peers[i].steam_ms = now;
+    ReleaseSRWLockExclusive(&peers_lock);
 }

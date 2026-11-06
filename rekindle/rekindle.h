@@ -57,6 +57,11 @@ void relay_reset(void);
 void lobby_reset(void);
 void emu_reset(void);
 
+// sessions.c: SteamNetworkingMessages sessions to the teammates in ping_peer_ids.
+DWORD WINAPI sessions_thread(LPVOID unused);
+int ping_peer_ids(uint64_t *out, int max);
+void ping_steam(uint64_t id, uint32_t ms);
+
 // patches.c
 extern bool keep_online_ok;
 void keep_online(bool on);

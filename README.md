@@ -13,7 +13,7 @@ It works for solo runs and co-op runs, after a crash or a quit to the desktop or
 - The rejoin goes to a fake lobby. A fake host answers the game's P2P link with the snapshot, then leaves like a crashed host, and the player keeps the run as its new host.
 - After the join, Rekindle puts back what a join does not carry. That is ground items, runes earned since the last save, the spawn position, the player number (so bosses drop dormant powers), field boss graces, enemy and boss HP, and the time of day.
 - When every player left, the first player to restore creates a lobby tagged with the run id. The others find it by lobby search and wait until the first player's world has loaded, then join.
-- Teammate names show the ping and packet loss to that player. Rekindle sends a small ping with the player's in-game name on its own P2P channel every 500 ms, and the teammate's Rekindle sends it back. Loss comes from gaps in the sequence numbers of the game's own packets, so it shows even when the teammate has no Rekindle.
+- Teammate names show the ping and packet loss to that player. The ping is the round trip of a Steam networking session Rekindle keeps open to each teammate. Rekindle also sends a small ping with the player's in-game name on its own P2P channel every 500 ms, and the teammate's Rekindle sends it back; its round trip is shown until the session connects. Loss comes from gaps in the sequence numbers of the game's own packets, so it shows even when the teammate has no Rekindle.
 - Experimental, off by default: players in one game party see each other in the Roundtable Hold. The party leader opens a game session and writes its lobby id into the party lobby, and the other members join it. Rekindle then runs the join steps a map load would run, gives each player its own player number, and hands the sparring puppet to the leader. When the leader starts matchmaking, the session closes and the game's own create or join runs right after. Ready states and the party carry over, so players see each other until the expedition starts.
 - It also removes the 300 second AFK kick and the rejoin penalty, and a player who crashed while downed comes back standing.
 
@@ -56,6 +56,7 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 | ping | show_loss | 1 | Show packet loss from a teammate next to their name when it reaches 1%. |
 | ping | hud_labels | 1 | Show ping and loss in the HUD party list. |
 | ping | overhead_labels | 0 | Show ping and loss in the name labels above teammates. |
+| ping | steam_sessions | 1 | Keep a SteamNetworkingMessages session open to each teammate. The labels show its ping, and mods that read ping and loss from that API work without Seamless Co-op. Teammates need Rekindle. |
 | hub | shared_roundtable | 0 | Experimental. Players in one game party see each other in the Roundtable Hold. Every party member needs Rekindle. Players see each other until the expedition starts. |
 | hub | sparring_pvp | 0 | Experimental. Needs shared_roundtable=1. Players in the Sparring Grounds can hit each other, and a player brought to 1 HP dies. |
 | log | level | error | `off`, `error`, `warn`, `info` or `debug`. Debug also logs the game's WinHTTP and Steam calls. |

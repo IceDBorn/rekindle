@@ -60,6 +60,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID r)
     CloseHandle(CreateThread(NULL, 0, startup_patches, NULL, 0, NULL));
     CloseHandle(CreateThread(NULL, 0, ping_thread, NULL, 0, NULL));
     CloseHandle(CreateThread(NULL, 0, hub_thread, NULL, 0, NULL));
+    CloseHandle(CreateThread(NULL, 0, sessions_thread, NULL, 0, NULL));
     patch_imports();
     snapshot_start();
     // Needs this DLL loaded early, before the game's EOS setup runs.
