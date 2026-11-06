@@ -17,7 +17,7 @@ It works for solo runs and co-op runs, after a crash or a quit to the desktop or
 - Experimental, off by default: players in one game party see each other in the Roundtable Hold. The party leader opens a game session and writes its lobby id into the party lobby, and the other members join it. Rekindle then runs the join steps a map load would run, gives each player its own player number, and hands the sparring puppet to the leader. When the leader starts matchmaking, the session closes and the game's own create or join runs right after. Ready states and the party carry over, so players see each other until the expedition starts.
 - It also removes the 300 second AFK kick and the rejoin penalty, and a player who crashed while downed comes back standing.
 
-Without `cl_server_redirector.dll` loaded, Rekindle answers every game server request itself from a loopback server and stubs EOS. The game never contacts FromSoftware servers in that mode.
+When no mod redirects the game's server, Rekindle answers every game server request itself from a loopback server. It checks this on the first connection: another mod redirects when the host is not a FromSoftware one or when it hooks WinHTTP. Rekindle also stubs EOS unless a mod loaded the EOS SDK first. The game never contacts FromSoftware servers in local mode.
 
 ## Install
 

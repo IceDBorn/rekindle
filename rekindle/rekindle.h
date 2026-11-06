@@ -17,9 +17,12 @@ struct import_hook {
 extern const struct import_hook http_imports[], steam_imports[];
 extern const int http_import_count, steam_import_count;
 
-// local_server.c: answers every WinHttpConnect when cl_server_redirector is absent.
+// local_server.c: answers every WinHttpConnect when no mod redirects the game's server.
+#define OFFICIAL_DOMAIN ".fromsoftware-game.net"
 extern volatile LONG local_port;
-bool local_mode(void);
+bool local_mode(const char *host);
+// http.c: the module that hooked the game's WinHTTP calls, or NULL.
+const char *winhttp_hooker(void);
 
 // lobby.c: Steam's answers for fake_lobby are rewritten so a rejoin to a dead lobby looks like a live one owned
 // by fake_host.
@@ -108,5 +111,5 @@ void rearm_restore(void);
 void restore_logged_in(void);
 
 // eos.c, crash.c
-int patch_eos(void);
+int gate_eos(void);
 LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep);

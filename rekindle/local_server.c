@@ -1,5 +1,5 @@
-// Local server: without cl_server_redirector every WinHttpConnect goes to this loopback server, which answers
-// like the real one, so no FromSoftware server is ever contacted.
+// Local server: when no mod redirects the game's server, every WinHttpConnect goes to this loopback server, which
+// answers like the real one, so no FromSoftware server is ever contacted.
 #include <winsock2.h>
 #include "rekindle.h"
 #include <stdio.h>
@@ -191,15 +191,24 @@ static DWORD WINAPI local_server(LPVOID ready)
     return 0;
 }
 
-// True when the redirector is absent, so the local server answers. Starts the server on first use.
-bool local_mode(void)
+// True when no other mod sends the game's server requests elsewhere, so the local server answers. Decided on the
+// first connect, once every mod has loaded; host is the server the game asked for.
+bool local_mode(const char *host)
 {
     static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
     static bool on;
     BOOL pending;
     if (InitOnceBeginInitialize(&once, 0, &pending, NULL) && pending) {
-        on = !GetModuleHandleA("cl_server_redirector.dll");
+        size_t n = host ? strlen(host) : 0, k = strlen(OFFICIAL_DOMAIN);
+        bool official = n >= k && !_stricmp(host + n - k, OFFICIAL_DOMAIN);
+        const char *by = winhttp_hooker();
+        if (by)
+            log_line(LOG_INFO, "Server requests pass through, WinHTTP is hooked by %s", by);
+        else if (!official)
+            log_line(LOG_INFO, "Server requests pass through, another mod points them at %s", host ? host : "?");
+        on = official && !by;
         if (on) {
+            log_line(LOG_INFO, "Local mode: no mod redirects the game's server");
             HANDLE ready = CreateEventA(NULL, TRUE, FALSE, NULL);
             CloseHandle(CreateThread(NULL, 0, local_server, ready, 0, NULL));
             WaitForSingleObject(ready, 5000);

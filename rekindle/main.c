@@ -1,5 +1,5 @@
 // Rekindle: restores crashed runs. At log level debug it also logs the game's WinHTTP and Steam calls.
-// Hooks nightreign.exe's import table, so it sees requests before cl_server_redirector rewrites them.
+// Hooks nightreign.exe's WinHTTP and Steam imports.
 #include "rekindle.h"
 #include <string.h>
 
@@ -62,8 +62,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID r)
     CloseHandle(CreateThread(NULL, 0, hub_thread, NULL, 0, NULL));
     patch_imports();
     snapshot_start();
-    // Local mode needs this DLL loaded early, before the game's EOS setup runs.
-    if (!GetModuleHandleA("cl_server_redirector.dll"))
-        patch_eos();
+    // Needs this DLL loaded early, before the game's EOS setup runs.
+    gate_eos();
     return TRUE;
 }

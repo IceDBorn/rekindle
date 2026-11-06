@@ -1,5 +1,5 @@
 // WinHTTP hooks: log the game's requests at debug level, send them to the local server in local mode, and
-// watch them for the run marker.
+// watch them for the run marker. A mod that redirects the game's server is found here too.
 #include "rekindle.h"
 #include <winhttp.h>
 #include <stdio.h>
@@ -52,7 +52,7 @@ static HINTERNET WINAPI hook_connect(HINTERNET s, LPCWSTR server, INTERNET_PORT 
     char host[256], info[320];
     wide(host, sizeof host, server, -1);
     // No real host is ever contacted in local mode, even when the server failed to start.
-    bool local = local_mode();
+    bool local = local_mode(host);
     HINTERNET h = local ? real_connect(s, L"127.0.0.1", (INTERNET_PORT)local_port, r) : real_connect(s, server, port, r);
     snprintf(info, sizeof info, "session=%p host=%s port=%u%s", s, host, port, local ? " local" : "");
     log_event("Connect", h, info, NULL, 0);
@@ -62,7 +62,7 @@ static HINTERNET WINAPI hook_connect(HINTERNET s, LPCWSTR server, INTERNET_PORT 
 static HINTERNET WINAPI hook_open_request(HINTERNET c, LPCWSTR verb, LPCWSTR object, LPCWSTR version,
                                           LPCWSTR referrer, LPCWSTR *accept, DWORD flags)
 {
-    if (local_mode())
+    if (local_mode(NULL))
         flags &= ~WINHTTP_FLAG_SECURE;
     HINTERNET h = real_open_request(c, verb, object, version, referrer, accept, flags);
     char v[32], obj[1024], info[1200];
@@ -199,3 +199,43 @@ const struct import_hook http_imports[] = {
     {"WinHttpSetStatusCallback", hook_set_callback, (void **)&real_set_callback},
 };
 const int http_import_count = sizeof http_imports / sizeof *http_imports;
+
+// Where a jmp hook at p goes, or NULL when p starts with no jmp.
+static const uint8_t *jump_target(const uint8_t *p)
+{
+    if (p[0] == 0xe9)
+        return p + 5 + *(int32_t *)(p + 1);
+    if (p[0] == 0xff && p[1] == 0x25)
+        return *(const uint8_t **)(p + 6 + *(int32_t *)(p + 2));
+    if (p[0] == 0x48 && p[1] == 0xb8 && p[10] == 0xff && p[11] == 0xe0)
+        return *(const uint8_t **)(p + 2);
+    if (p[0] == 0x49 && p[1] == 0xbb && p[10] == 0x41 && p[11] == 0xff && p[12] == 0xe3)
+        return *(const uint8_t **)(p + 2);
+    return NULL;
+}
+
+// The name of a module that hooked one of the game's WinHTTP calls, ahead of this DLL's import slot or inside
+// winhttp.dll, or NULL when none did.
+const char *winhttp_hooker(void)
+{
+    static char name[MAX_PATH];
+    uint8_t *base = (uint8_t *)GetModuleHandleA("winhttp.dll");
+    if (!base)
+        return NULL;
+    size_t size = ((IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew))->OptionalHeader.SizeOfImage;
+    for (int i = 0; i < http_import_count; i++) {
+        const uint8_t *p = *http_imports[i].real, *to = p;
+        if (p >= base && p - base < (ptrdiff_t)size)
+            to = jump_target(p);
+        if (!to || (to >= base && to - base < (ptrdiff_t)size))
+            continue;
+        HMODULE m = NULL;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)to, &m);
+        if (!m || !GetModuleFileNameA(m, name, sizeof name))
+            snprintf(name, sizeof name, "a hook at %p", (const void *)to);
+        log_line(LOG_DEBUG, "%s hooked by %s", http_imports[i].name, name);
+        return name;
+    }
+    return NULL;
+}
