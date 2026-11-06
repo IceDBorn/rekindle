@@ -171,6 +171,11 @@ void marker_rejoin_failed(void)
 }
 
 // A restore that never joined a lobby was cancelled on the prompt, so the run is given up.
+bool restore_join_seen(void)
+{
+    return restore_joined;
+}
+
 void marker_restore_ended(void)
 {
     if (!restore_joined) {

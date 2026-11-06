@@ -75,9 +75,14 @@ void relay_abandon(void)
     InterlockedExchange(&abandon, 1);
 }
 
+// Relay lobbies this launch created; a search must not offer one back, and a quit leaves the last one.
+static uint64_t own_relay, stale_relay;
+
 void relay_reset(void)
 {
     InterlockedExchange(&abandon, 0);
+    if (real_lobby && real_lobby == own_relay)
+        stale_relay = real_lobby;
     game_lobby = real_lobby = found_lobby = create_call = search_call = restore_mgid = 0;
     lobby_decided = found_ready = waiting = world_ready = false;
 }
@@ -122,6 +127,11 @@ void relay_tick(void)
         game_lobby = real_lobby = run_lobby = 0, fake_lobby = fake_host = restore_mgid = 0;
         lobby_decided = true, waiting = false, create_call = search_call = 0;
     }
+    if (stale_relay) {
+        note(LOG_INFO, "Relay leave 0x%llx (restore reset)", (unsigned long long)stale_relay);
+        ((Fwd_t)mm_stub[15])(mm_self, stale_relay, 0, 0);
+        stale_relay = 0;
+    }
     if (restore_mgid && !lobby_decided && !search_call && now - search_at > 5000) {
         char v[24];
         snprintf(v, sizeof v, "%llu", (unsigned long long)restore_mgid);
@@ -142,6 +152,12 @@ void relay_tick(void)
             search_call = 0;
             if (r != 0xffffffff && r > 0 && !lobby_decided) {
                 ((GetId_t)mm_orig[12])(mm_self, &found_lobby, 0);
+                if (found_lobby == own_relay) {
+                    note(LOG_INFO, "Relay found our own lobby 0x%llx, skipped", (unsigned long long)found_lobby);
+                    found_lobby = 0;
+                }
+            }
+            if (found_lobby && r != 0xffffffff && r > 0 && !lobby_decided) {
                 const char *v = ((GetData_t)mm_orig[19])(mm_self, found_lobby, READY_KEY);
                 found_ready = v && *v == 0x31;
                 note(LOG_INFO, "Relay found %u, lobby 0x%llx ready=%d", r, (unsigned long long)found_lobby, found_ready);
@@ -163,7 +179,7 @@ void relay_tick(void)
         char v[24];
         snprintf(v, sizeof v, "%llu", (unsigned long long)restore_mgid);
         memcpy(&real_lobby, r + 8, 8);
-        run_lobby = real_lobby;
+        run_lobby = own_relay = real_lobby;
         save_mates();
         ((Fwd_t)mm_stub[20])(mm_self, real_lobby, (uint64_t)"inviteParam", (uint64_t)"0");
         ((Fwd_t)mm_stub[20])(mm_self, real_lobby, (uint64_t)RELAY_KEY, (uint64_t)v);

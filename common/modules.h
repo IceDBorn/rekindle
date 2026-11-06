@@ -12,6 +12,7 @@ void clear_marker(const char *why);
 // run_marker.c: a restore ended in the Roundtable; the marker is dropped only after the third time in a row.
 void marker_rejoin_failed(void);
 void marker_restore_ended(void);
+bool restore_join_seen(void);
 // run_marker.c: a restore got back into the run, so the failed rejoin count starts over.
 void marker_rejoined(void);
 

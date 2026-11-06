@@ -572,6 +572,16 @@ static void hook_sync_update(void *mgr, float dt)
                  (unsigned long long)run_mgid);
         restoring_mgid = 0;
     }
+    // The Roundtable loaded without the game ever joining a lobby: Cancel was pressed on the restore prompt.
+    uint8_t *gdm0 = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
+    if (!hold && restoring_mgid && !items_restored && !restore_join_seen() && ses && !*(int *)(ses + 0xc) && gdm0 &&
+        gdm0[0xdc] == 1) {
+        items_restored = true;
+        log_line(LOG_INFO, "restore mgid=%llu cancelled", (unsigned long long)restoring_mgid);
+        restoring_mgid = 0;
+        relay_abandon();
+        marker_restore_ended();
+    }
     if (!hold && restoring_mgid && !items_restored && now - first_tick_ms > 10000 && ses && *(int *)(ses + 0xc) != 6) {
         items_restored = true;
         // No session in the Roundtable: the run ended while this player was away, so the game did not rejoin it.
