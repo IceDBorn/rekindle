@@ -5,7 +5,7 @@
 
 uint64_t fake_lobby, fake_host, fake_self;
 static uint64_t fake_join_call;
-bool run_restored, lobby_from_save;
+bool run_restored, restore_joined, lobby_from_save;
 void **mm_orig, **utils_orig;
 uint64_t host_gone_at;
 volatile LONG host_gone;
@@ -48,6 +48,9 @@ static uint64_t fk_join(void *self, uint64_t lobby)
     hub_lobby_joined(self, lobby);
     reset_mates();
     bool fake = fake_lobby && lobby == fake_lobby;
+    // Any join during a restore means OK was pressed on the prompt; a relay join uses another lobby id.
+    if (restore_mgid)
+        restore_joined = true;
     uint64_t call = ((Join_t)mm_orig[14])(self, fake ? lobby : tr(lobby));
     if (fake) {
         fake_join_call = call;
@@ -61,7 +64,7 @@ static uint64_t fk_join(void *self, uint64_t lobby)
 
 void lobby_reset(void)
 {
-    run_restored = false, lobby_from_save = false;
+    run_restored = restore_joined = false, lobby_from_save = false;
     fake_join_call = 0, host_gone_at = 0;
     InterlockedExchange(&host_gone, 0);
     fake_lobby = DEFAULT_LOBBY, fake_host = DEFAULT_HOST;

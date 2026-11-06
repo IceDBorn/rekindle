@@ -170,6 +170,16 @@ void marker_rejoin_failed(void)
     hub_marker_cleared();
 }
 
+// A restore that never joined a lobby was cancelled on the prompt, so the run is given up.
+void marker_restore_ended(void)
+{
+    if (!restore_joined) {
+        clear_marker("restore cancelled");
+        return;
+    }
+    marker_rejoin_failed();
+}
+
 void marker_rejoined(void)
 {
     char path[MAX_PATH];

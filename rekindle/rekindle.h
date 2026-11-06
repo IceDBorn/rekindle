@@ -29,7 +29,7 @@ const char *winhttp_hooker(void);
 #define DEFAULT_LOBBY 0x186000048928a92ULL
 #define DEFAULT_HOST 76561200107749360ULL
 extern uint64_t fake_lobby, fake_host, fake_self;
-extern bool run_restored;
+extern bool run_restored, restore_joined;
 // The rejoin lobby came from the save; its first LobbyDataUpdate tells whether a teammate is still in the run.
 extern bool lobby_from_save;
 extern void **mm_orig, **utils_orig;

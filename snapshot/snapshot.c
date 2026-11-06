@@ -580,7 +580,7 @@ static void hook_sync_update(void *mgr, float dt)
             log_line(LOG_INFO, "restore mgid=%llu ended in the Roundtable", (unsigned long long)restoring_mgid);
             restoring_mgid = 0;
             relay_abandon();
-            marker_rejoin_failed();
+            marker_restore_ended();
         } else {
             marker_rejoined();
             restore_snapshot(restoring_mgid);
