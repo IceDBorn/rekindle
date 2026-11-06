@@ -112,6 +112,16 @@ int plant_save(const char *path, uint64_t mgid, const uint8_t box[20], bool have
         lobby_from_save = true;
         free(na);
         return free(s), 2;
+    } else if (!memcmp(a + 0x5485, rec, 4)) {
+        // The game's rejoin record of an older, ended run: the layout is already shifted, so rewrite it in place.
+        uint64_t old;
+        memcpy(&old, a + 0x546d, 8);
+        note(LOG_INFO, "Save holds a stale rejoin record mgid=%llu, replacing it", (unsigned long long)old);
+        memcpy(na, a, an);
+        memcpy(na + 0x5425, mg, 8), memcpy(na + 0x546d, mg, 8), memcpy(na + 0x5485, rec, 15);
+        static const uint8_t no_box[20] = {0xff, 0xff, 0xff, 0xff};
+        memcpy(na + 0x5445, have_box ? box : no_box, 20);
+        ret = 3;
     } else if (memcmp(a + 0x5485, z7, 7)) {
         free(na);
         return free(s), -6;
