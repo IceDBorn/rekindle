@@ -29,7 +29,7 @@ static bool enabled, spar_pvp;
 static uint8_t *base;
 static void *mm;
 static uint64_t party, session_lobby, joined_lobby, held_party;
-static bool leader, hub_active, own_call, synced, hub_leaving;
+static bool leader, hub_active, own_call, synced, hub_leaving, hub_torn;
 static volatile uint8_t hub_closing;
 static uint64_t session_at, retry_at, loaded_at;
 static void *create_tramp, *join_tramp, *leave_tramp;
@@ -92,7 +92,7 @@ static void leave_session(const char *why)
     note(LOG_INFO, "Hub leave session (%s)", why);
     if (leader && party && mm)
         ((SetData_t)mm_orig[20])(mm, party, HUB_KEY, "");
-    hub_active = synced = false, hub_leaving = true, hub_closing = 1;
+    hub_active = synced = hub_torn = false, hub_leaving = true, hub_closing = 1;
     session_lobby = joined_lobby = 0, retry_at = now() + 5000;
     if (sm && (state() == 3 || state() == 6))
         ((void (*)(void *, uint8_t))leave_tramp)(sm, 4);
@@ -618,7 +618,8 @@ static void run_pending(void)
         note(LOG_ERROR, "Hub dropped deferred game call, session still state %d", state());
         pending.kind = 0;
     }
-    if (!pending.kind || state() != 0)
+    // State 0 can come before the old session's teardown, which then closes the new session too.
+    if (!pending.kind || state() != 0 || (!hub_torn && now() < pending.at + 3000))
         return;
     own_call = true;
     bool ok = pending.kind == 1 ? ((Create_t)create_tramp)(pending.sm, pending.type, &pending.flag)
@@ -667,6 +668,7 @@ static void hook_teardown_ready(void *party_man, uint8_t ready)
 {
     if (hub_active || hub_leaving) {
         ((uint8_t *)party_man)[0x64] = 0;
+        hub_torn = true;
         note(LOG_INFO, "Hub kept ready state through the session close");
         return;
     }
