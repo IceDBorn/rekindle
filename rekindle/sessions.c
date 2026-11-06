@@ -24,6 +24,30 @@ typedef void *(*FindIface_t)(int32_t, const char *);
 typedef int32_t (*SteamUser_t)(void);
 typedef void (*Release_t)(void *);
 
+static SessionInfo_t real_session_info;
+static volatile LONG64 other_read_ms;
+
+// Another mod that reads session ping shows ping itself. Rekindle reads through real_session_info, so every
+// call that lands here comes from someone else.
+static int hook_session_info(void *self, const struct identity *who, void *info, void *status)
+{
+    if (!InterlockedExchange64(&other_read_ms, (LONG64)GetTickCount64())) {
+        char name[MAX_PATH] = "?";
+        HMODULE m = NULL;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR)__builtin_return_address(0), &m))
+            GetModuleFileNameA(m, name, sizeof name);
+        note(LOG_INFO, "Steam session ping read by %s, labels leave the ping to it", name);
+    }
+    return real_session_info(self, who, info, status);
+}
+
+bool ping_shown_elsewhere(void)
+{
+    LONG64 t = other_read_ms;
+    return t && GetTickCount64() - (uint64_t)t < 10000;
+}
+
 static void *find_messages(HMODULE api)
 {
     FindIface_t find = (FindIface_t)(void *)GetProcAddress(api, "SteamInternal_FindOrCreateUserInterface");
@@ -50,6 +74,13 @@ DWORD WINAPI sessions_thread(LPVOID unused)
         return 0;
     }
     void **vt = *(void ***)msgs;
+    // Every caller shares this object, so its vtable slot sees other mods' calls too.
+    real_session_info = (SessionInfo_t)vt[5];
+    DWORD old;
+    if (VirtualProtect(&vt[5], 8, PAGE_READWRITE, &old)) {
+        vt[5] = (void *)hook_session_info;
+        VirtualProtect(&vt[5], 8, old, &old);
+    }
     note(LOG_INFO, "Steam sessions on");
     for (uint64_t ticks = 0;; ticks++, Sleep(KEEPALIVE_MS)) {
         uint64_t ids[8];
@@ -60,7 +91,7 @@ DWORD WINAPI sessions_thread(LPVOID unused)
             static const char keepalive[4] = "RKS";
             ((SendToUser_t)vt[0])(msgs, &who, keepalive, sizeof keepalive, SEND_FLAGS, SESSION_CHANNEL);
             int32_t status[64] = {0};
-            int state = ((SessionInfo_t)vt[5])(msgs, &who, NULL, status);
+            int state = real_session_info(msgs, &who, NULL, status);
             // k_ESteamNetworkingConnectionState_Connected; status[1] is m_nPing.
             if (state == 3 && status[1] >= 0)
                 ping_steam(ids[i], (uint32_t)status[1]);

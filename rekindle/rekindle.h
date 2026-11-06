@@ -61,6 +61,8 @@ void emu_reset(void);
 DWORD WINAPI sessions_thread(LPVOID unused);
 int ping_peer_ids(uint64_t *out, int max);
 void ping_steam(uint64_t id, uint32_t ms);
+// True while another mod reads Steam session ping, so it shows ping itself.
+bool ping_shown_elsewhere(void);
 
 // patches.c
 extern bool keep_online_ok;

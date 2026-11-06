@@ -227,9 +227,10 @@ static void build_text(struct peer *p, uint64_t now)
     int n = 0;
     p->extra[0] = 0;
     // Steam's session ping is the network round trip; the pongs also wait up to a frame on each side.
-    if (show_ping && p->steam_ms && now - p->steam_ms < PONG_TTL_MS)
+    bool ping = show_ping && !ping_shown_elsewhere();
+    if (ping && p->steam_ms && now - p->steam_ms < PONG_TTL_MS)
         n += swprintf(p->extra + n, 32 - n, L"  %ums", p->steam_ping);
-    else if (show_ping && p->rtt_n && now - p->pong_ms < PONG_TTL_MS)
+    else if (ping && p->rtt_n && now - p->pong_ms < PONG_TTL_MS)
         n += swprintf(p->extra + n, 32 - n, L"  %ums", median_rtt(p));
     if (show_loss && p->loss_tenths >= 10)
         swprintf(p->extra + n, 32 - n, L"  %u%%", (p->loss_tenths + 5) / 10);
