@@ -59,6 +59,14 @@ static uint64_t fk_join(void *self, uint64_t lobby)
     return call;
 }
 
+void lobby_reset(void)
+{
+    run_restored = false, lobby_from_save = false;
+    fake_join_call = 0, host_gone_at = 0;
+    InterlockedExchange(&host_gone, 0);
+    fake_lobby = DEFAULT_LOBBY, fake_host = DEFAULT_HOST;
+}
+
 static bool fk_done(void *self, uint64_t call, bool *failed)
 {
     bool done = ((Done_t)utils_orig[11])(self, call, failed);

@@ -187,6 +187,9 @@ void run_marker_http(const void *data, size_t n)
     mod_path(path, ACTIVE_RUN_FILE);
     if (find_bytes(s, n, "\"ResponseCreateSessionParams\"") && (p = find_bytes(s, n, "\"player_id\":")))
         self_pid = (uint32_t)strtoul((const char *)p + 12, NULL, 10);
+    // The game's first request once it accepted the login.
+    if (find_bytes(s, n, "\"RequestGetNotificationMessageParams\""))
+        restore_logged_in();
     // The host gets the id from GetMultiGameID; a guest first sees it in its JoinMultiplay request.
     if ((find_bytes(s, n, "\"ResponseGetMultiGameIDParams\"") ||
          (find_bytes(s, n, "\"RequestJoinMultiplayParams\"") && find_bytes(s, n, "\"relation_type\":\"GUEST\""))) &&
@@ -207,5 +210,9 @@ void run_marker_http(const void *data, size_t n)
         note(LOG_INFO, "Run %llu left, marker kept", (unsigned long long)run_mgid);
         run_mgid = 0, run_lobby = 0;
         memset(run_mates, 0, sizeof run_mates), memset(run_pids, 0, sizeof run_pids);
+        // The keep_online patch belongs to the restored run.
+        if (keep_online_ok)
+            keep_online(false);
+        rearm_restore();
     }
 }

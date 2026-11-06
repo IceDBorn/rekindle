@@ -49,6 +49,10 @@ void relay_resolve(bool live);
 // A 505 for the fake lobby that waits until the relay lobby is ready.
 bool relay_hold_505(void);
 bool emu_active(void);
+// State of one restore, cleared so a quit to the title can restore again in the same process.
+void relay_reset(void);
+void lobby_reset(void);
+void emu_reset(void);
 
 // patches.c
 extern bool keep_online_ok;
@@ -98,7 +102,10 @@ uint64_t trio_mate(void);
 bool build_answers(uint64_t mgid, const uint8_t *s, size_t n, uint64_t *clock, uint8_t box[20]);
 int plant_save(const char *path, uint64_t mgid, const uint8_t box[20], bool have_box);
 uint64_t find_self(const char *appdata);
-DWORD WINAPI auto_restore(LPVOID unused);
+DWORD WINAPI auto_restore(LPVOID quit);
+// A quit to the title screen with the marker kept: arms the restore again before the game reloads the save.
+void rearm_restore(void);
+void restore_logged_in(void);
 
 // eos.c, crash.c
 int patch_eos(void);

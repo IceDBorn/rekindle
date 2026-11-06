@@ -29,6 +29,8 @@ bool snapshot_install(void);
 void take_join(uint8_t *base);
 // Set from the auto restore until the restored run has its clock back.
 extern uint64_t restoring_mgid;
+// Set with restoring_mgid; the next world's first tick starts the restore's timers.
+extern volatile LONG restore_armed;
 void snap_clock(uint8_t *base);
 void apply_restore_clock(void);
 void restore_day(uint8_t *base, int day);
@@ -60,6 +62,7 @@ void party_probe(uint8_t *base);
 bool big_enemy_hurt(uint8_t *base);
 void queue_enemy_hp(const uint8_t *d, uint32_t l);
 void restore_enemies(uint8_t *base, uint64_t now);
+void clear_enemy_hp(void);
 
 // restore.c
 void restore_snapshot(uint64_t mgid);

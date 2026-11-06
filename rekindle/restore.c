@@ -1,12 +1,15 @@
-// Auto restore: on launch, a run marker with a snapshot plants the save and builds the fake host's answers.
+// Auto restore: on launch or a quit to the title, a run marker with a snapshot plants the save and builds the fake
+// host's answers.
 #include "rekindle.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "snapshot_format.h"
 
-DWORD WINAPI auto_restore(LPVOID unused)
+static uint64_t armed_mgid, armed_clock;
+
+// A non-NULL argument marks a quit to the title: the run is armed only after the next login (restore_logged_in).
+DWORD WINAPI auto_restore(LPVOID quit)
 {
-    (void)unused;
     char path[MAX_PATH], save[MAX_PATH];
     unsigned long long mgid = 0;
     // Mates are told apart from self, so this runs on every launch.
@@ -27,7 +30,8 @@ DWORD WINAPI auto_restore(LPVOID unused)
         note(LOG_ERROR, "Auto restore: no snapshot for mgid=%llu", mgid);
         return 0;
     }
-    run_mgid = mgid;
+    if (!quit)
+        run_mgid = mgid;
     // PROBE: keep the snapshot this restore used; the restored game overwrites the run's file.
     char kept[MAX_PATH + 8];
     snprintf(kept, sizeof kept, "%s.used", path);
@@ -64,8 +68,37 @@ DWORD WINAPI auto_restore(LPVOID unused)
         clear_marker("restore failed");
         return 0;
     }
+    if (quit) {
+        armed_clock = clock, armed_mgid = mgid;
+        return 0;
+    }
     restore_mgid = mgid;
     if (clock)
         snapshot_restoring(mgid, clock);
     return 0;
+}
+
+// Set during the title's login, the run made that login fail once ("Failed to log in to the game server").
+void restore_logged_in(void)
+{
+    uint64_t mgid = armed_mgid;
+    if (!mgid)
+        return;
+    armed_mgid = 0;
+    run_mgid = restore_mgid = mgid;
+    if (armed_clock)
+        snapshot_restoring(mgid, armed_clock);
+    note(LOG_INFO, "Restore mgid=%llu armed after login", (unsigned long long)mgid);
+}
+
+// The game reads the save again about 2 s after DeleteSession; the planted record must be there by then.
+void rearm_restore(void)
+{
+    if (!cfg("restore", "auto_restore", 1))
+        return;
+    relay_reset();
+    lobby_reset();
+    emu_reset();
+    self_pid = 0, armed_mgid = 0;
+    CloseHandle(CreateThread(NULL, 0, auto_restore, (LPVOID)1, 0, NULL));
 }

@@ -12,6 +12,11 @@ static int pending_hp_count;
 static uint64_t pending_hp_until;
 static bool pending_missed[512];
 
+void clear_enemy_hp(void)
+{
+    pending_hp_count = 0;
+}
+
 static int32_t *enemy_hp_of(uint8_t *chr)
 {
     uint8_t **bag = *(uint8_t ***)(chr + 0x1b8);

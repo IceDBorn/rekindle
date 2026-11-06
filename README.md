@@ -2,7 +2,7 @@
 
 Rekindle is a native mod for Elden Ring Nightreign that brings back a run after the game crashes. Relaunch the game and it offers to rejoin the run, with the map, items and enemies as they were a few seconds before the crash.
 
-It works for solo runs and co-op runs, after a crash or a quit to the desktop or title screen, and offline. Quitting to the title screen still needs a relaunch before the restore.
+It works for solo runs and co-op runs, after a crash or a quit to the desktop or title screen, and offline. After a quit to the title screen the game offers the restore without a relaunch.
 
 ## How it works
 
@@ -37,7 +37,7 @@ The game addresses are for one build of `nightreign.exe`. A game update can brea
 
 | Section | Key | Default | Effect |
 | --- | --- | --- | --- |
-| restore | auto_restore | 1 | Restore a crashed run on the next launch. |
+| restore | auto_restore | 1 | Restore a crashed run on the next launch, or a quit run at the title screen. |
 | restore | keep_online | 1 | Keep a restored run online after the fake host leaves. |
 | restore | restore_ground_items | 1 | Put items left on the ground back. |
 | restore | restore_runes | 1 | Give back runes earned after the game last wrote the save. |

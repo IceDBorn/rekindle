@@ -2,6 +2,7 @@
 // Raw handshake, AES-CTR frames, reliable hello and acks, then plays the answers built from the run's snapshot.
 #include "rekindle.h"
 #include <bcrypt.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -463,6 +464,22 @@ void emu_set_answers(uint8_t *intro, size_t intro_n, uint8_t *ans, size_t ans_n,
     emu_answers = ans, emu_answers_len = ans_n;
     emu_stream = str, emu_stream_len = str_n;
     emu_built = true;
+    LeaveCriticalSection(&emu_lock);
+}
+
+void emu_reset(void)
+{
+    InterlockedExchange(&auth_pending, 0);
+    EnterCriticalSection(&emu_lock);
+    free(emu_replay), free(emu_answers), free(emu_stream);
+    emu_replay = emu_answers = emu_stream = NULL;
+    emu_replay_len = emu_replay_pos = emu_answers_len = emu_stream_len = emu_stream_pos = 0;
+    emu_game_nonce = 0, emu_state = 0, emu_wseq = 0, emu_t0 = emu_stream_t0 = 0;
+    emu_qhead = emu_qtail = 0;
+    emu_rseq = EMU_SEQ0 + 1, emu_frag_first = 0;
+    memset(emu_echoed, 0, sizeof emu_echoed);
+    emu_built = false, emu_mate2 = 0;
+    emu_host_nonce = (GetTickCount() * 2654435761u) | 0x01000000;
     LeaveCriticalSection(&emu_lock);
 }
 

@@ -4,6 +4,7 @@
 #include <string.h>
 
 uint64_t restoring_mgid;
+volatile LONG restore_armed;
 static uint64_t restore_clock;
 
 // Clock record: type 0, len 8 + 0x200: the clock qword, then the WorldAreaTime struct for later study.
@@ -22,6 +23,8 @@ void snapshot_restoring(uint64_t mgid, uint64_t clock)
 {
     restore_clock = clock;
     restoring_mgid = mgid;
+    if (mgid)
+        InterlockedExchange(&restore_armed, 1);
     load_numbers(mgid);
 }
 

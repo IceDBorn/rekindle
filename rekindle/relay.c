@@ -75,6 +75,13 @@ void relay_abandon(void)
     InterlockedExchange(&abandon, 1);
 }
 
+void relay_reset(void)
+{
+    InterlockedExchange(&abandon, 0);
+    game_lobby = real_lobby = found_lobby = create_call = search_call = restore_mgid = 0;
+    lobby_decided = found_ready = waiting = world_ready = false;
+}
+
 bool relay_hold_505(void)
 {
     return waiting;

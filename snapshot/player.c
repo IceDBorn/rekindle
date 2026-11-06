@@ -34,8 +34,8 @@ uint32_t player_tile(uint8_t *base)
     return tile;
 }
 
-// Level and runes (PlayerGameData +0x68 level, +0x6c held runes, +0x110 runes gained). The save can be older
-// than the snapshot, so a restore gives back runes earned after the game last wrote it.
+// Level and runes (PlayerGameData +0x68 level, +0x6c held runes, +0x110 runes gained). A restore matches the runes
+// to the snapshot: an older save gets the later runes, a newer one loses runes from enemies the snapshot brings back.
 void take_player(uint8_t *base)
 {
     uint8_t *gdm = *(uint8_t **)(base + GAME_DATA_MAN_RVA), *pgd = gdm ? *(uint8_t **)(gdm + 8) : NULL;
@@ -53,8 +53,10 @@ void restore_player(uint8_t *base, const int32_t v[3])
         return;
     int32_t *lv = (int32_t *)(pgd + 0x68), *runes = (int32_t *)(pgd + 0x6c), *gained = (int32_t *)(pgd + 0x110);
     log_line(LOG_INFO, "player-restore level=%d/%d runes=%d/%d gained=%d/%d", *lv, v[0], *runes, v[1], *gained, v[2]);
-    if (*lv == v[0] && v[2] > *gained)
-        *runes += v[2] - *gained, *gained = v[2];
+    if (*lv != v[0] || v[2] == *gained)
+        return;
+    int32_t r = *runes + v[2] - *gained;
+    *runes = r > 0 ? r : 0, *gained = v[2];
 }
 
 // A restored player gets its session player number from the fake host, and only sees ground items targeted at

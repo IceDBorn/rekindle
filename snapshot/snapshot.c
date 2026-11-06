@@ -549,13 +549,22 @@ static void hook_sync_update(void *mgr, float dt)
 {
     if (!InterlockedExchange(&sync_tick_seen, 1))
         log_line(LOG_DEBUG, "sync-tick mgr=%p", mgr);
-    static uint64_t first_tick_ms;
+    static uint64_t first_tick_ms, last_tick_ms;
     uint64_t now = unix_ms();
+    // A restore armed at a quit waits for the next world; the old one still ticks while it unloads.
+    static bool items_restored;
+    bool hold = restore_armed && now - last_tick_ms < 2000;
+    if (restore_armed && !hold) {
+        InterlockedExchange(&restore_armed, 0);
+        first_tick_ms = now, items_restored = false;
+        clear_enemy_hp();
+        log_line(LOG_DEBUG, "restore mgid=%llu timers start", (unsigned long long)restoring_mgid);
+    }
+    last_tick_ms = now;
     if (!first_tick_ms)
         first_tick_ms = now;
     // A restored game takes snapshots again once its clock is back.
     // Ground items go back once the fake host is gone (session state no longer 6, guest).
-    static bool items_restored;
     uint8_t *ses = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + SESSION_MAN_RVA);
     // A new run started instead of the restore; its marker stays.
     if (restoring_mgid && run_mgid && run_mgid != restoring_mgid) {
@@ -563,7 +572,7 @@ static void hook_sync_update(void *mgr, float dt)
                  (unsigned long long)run_mgid);
         restoring_mgid = 0;
     }
-    if (restoring_mgid && !items_restored && now - first_tick_ms > 10000 && ses && *(int *)(ses + 0xc) != 6) {
+    if (!hold && restoring_mgid && !items_restored && now - first_tick_ms > 10000 && ses && *(int *)(ses + 0xc) != 6) {
         items_restored = true;
         // No session in the Roundtable: the run ended while this player was away, so the game did not rejoin it.
         uint8_t *gdm = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + GAME_DATA_MAN_RVA);
@@ -587,9 +596,9 @@ static void hook_sync_update(void *mgr, float dt)
     static uint64_t last_grace_ms;
     if (graces && items_restored && now - last_grace_ms > 1000)
         last_grace_ms = now, fix_graces((uint8_t *)GetModuleHandleA(NULL));
-    if (items_restored)
+    if (items_restored && !hold)
         restore_enemies((uint8_t *)GetModuleHandleA(NULL), now);
-    if (restoring_mgid && now - first_tick_ms > resume_snapshots_ms)
+    if (!hold && restoring_mgid && now - first_tick_ms > resume_snapshots_ms)
         apply_restore_clock();
     if (!streaming && helper_trampoline) {
         bool early = run_request && InterlockedExchange(&run_request, 0);
