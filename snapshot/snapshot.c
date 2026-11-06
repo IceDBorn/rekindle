@@ -54,6 +54,19 @@ void snap_mark(uint8_t kind, uint32_t id)
     snap_write(0, rec, sizeof rec);
 }
 
+// PROBE: logs each 240-byte record of a 0x40 payload (bool, count, records).
+static void probe_x40_records(const char *how, const uint8_t *data, int len)
+{
+    if (len < 2 || !data[0])
+        return;
+    for (int i = 0; i < data[1] && 2 + (i + 1) * 240 <= len; i++) {
+        char hex[3 * 240 + 1];
+        for (int k = 0; k < 240; k++)
+            snprintf(hex + 3 * k, 4, "%02x ", data[2 + i * 240 + k]);
+        log_line(LOG_DEBUG, "Probe 0x40 %s record %d/%d %s", how, i + 1, data[1], hex);
+    }
+}
+
 // PROBE: logs game sends to real peers, each type up to 6 times per peer pointer.
 static void probe_send(const char *how, uint64_t peer, uint32_t type, const uint8_t *data, int len)
 {
@@ -73,6 +86,8 @@ static void probe_send(const char *how, uint64_t peer, uint32_t type, const uint
     for (int k = 0; k < len && k < 112; k++)
         snprintf(hex + 3 * k, 4, "%02x ", data[k]);
     log_line(LOG_DEBUG, "Probe %s peer=%llx type=%02x len=%d %s", how, (unsigned long long)peer, type, len, hex);
+    if ((type & 0xff) == 0x40)
+        probe_x40_records(how, data, len);
 }
 
 static void hook_send_helper(void *mgr, uint64_t *peer, uint32_t type, const uint8_t *data, int len)
@@ -114,6 +129,90 @@ static void hook_broadcast(void *mgr, uint32_t type, const uint8_t *data, int le
     }
     probe_send("bcast", 0, type, data, len);
     broadcast_trampoline(mgr, type, data, len);
+}
+
+// PROBE: the guest's join step FUN_140dcd330 sends 0x51 kind 9, then polls FUN_14035c330 until it returns true.
+// The poll stays false if every 0x40 record fails FUN_14033f7a0, and after 30 s the step sets session state 7.
+#define X40_LIST_RVA 0x3c0ae30
+#define MAP_MAN_RVA 0x3c123f8
+#define SEND_TO_HOST_RVA 0xdf2550
+#define MSG_POLL_RVA 0xdf1f20
+#define X40_POLL_RVA 0x35c330
+#define X40_RECORD_VALID_RVA 0x33f7a0
+#define RECORD_ORIGIN_VALID_RVA 0x3493e0
+#define HANDLE_TO_CHR_RVA 0xaec800
+#define NET_HANDLE_TO_CHR_RVA 0x4e1100
+#define MAP_ID_DECODE_RVA 0x2ff820
+#define MAP_ID_LOADED_RVA 0x6343a0
+typedef void (*SendToHost_t)(void *, uint32_t, const uint8_t *, int);
+typedef int (*MsgPoll_t)(void *, uint32_t, uint8_t *, int);
+typedef uint64_t (*X40Poll_t)(void *);
+typedef uint64_t (*X40RecordValid_t)(const uint8_t *);
+static SendToHost_t send_to_host_trampoline;
+static MsgPoll_t msg_poll_trampoline;
+static X40Poll_t x40_poll_trampoline;
+static X40RecordValid_t x40_record_valid_trampoline;
+static bool x40_received;
+
+static int probe_session_state(void)
+{
+    uint8_t *ses = *(uint8_t **)((uint8_t *)GetModuleHandleA(NULL) + SESSION_MAN_RVA);
+    return ses ? *(int *)(ses + 0xc) : -1;
+}
+
+static void hook_send_to_host(void *mgr, uint32_t type, const uint8_t *data, int len)
+{
+    if ((type & 0xff) == 0x51 && data && len >= 1)
+        log_line(LOG_DEBUG, "Probe 0x51 request kind=%u state=%d x40_list=%p", data[0], probe_session_state(),
+                 *(void **)((uint8_t *)GetModuleHandleA(NULL) + X40_LIST_RVA));
+    send_to_host_trampoline(mgr, type, data, len);
+}
+
+static int hook_msg_poll(void *mgr, uint32_t type, uint8_t *buf, int size)
+{
+    int n = msg_poll_trampoline(mgr, type, buf, size);
+    if ((type & 0xff) == 0x40 && n) {
+        x40_received = true;
+        log_line(LOG_DEBUG, "Probe 0x40 received len=%d first=%02x count=%d", n, n > 0 ? buf[0] : 0,
+                 n > 1 ? buf[1] : 0);
+        if (n > 0)
+            probe_x40_records("recv", buf, n);
+    }
+    return n;
+}
+
+static uint64_t hook_x40_poll(void *mgr)
+{
+    x40_received = false;
+    uint64_t r = x40_poll_trampoline(mgr);
+    if (x40_received)
+        log_line(LOG_DEBUG, "Probe 0x40 poll result=%d state=%d", (int)(uint8_t)r, probe_session_state());
+    return r;
+}
+
+// Repeats the checks of FUN_14033f7a0 that depend on the guest's own world.
+static uint64_t hook_x40_record_valid(const uint8_t *rec)
+{
+    uint64_t r = x40_record_valid_trampoline(rec);
+    uint8_t *base = (uint8_t *)GetModuleHandleA(NULL);
+    void *wcm = *(void **)(base + WORLD_CHR_MAN_RVA), *chr80 = NULL, *chr54 = NULL;
+    uint32_t r80 = *(const uint32_t *)(rec + 0x80), map = *(const uint32_t *)(rec + 0xb0), decoded;
+    int h54b = *(const int *)(rec + 0x58), loaded = -1;
+    if (wcm && r80 >> 28 == 1)
+        chr80 = ((void *(*)(const uint8_t *))(base + HANDLE_TO_CHR_RVA))(rec + 0x80);
+    if (wcm && h54b != -1)
+        chr54 = ((void *(*)(const uint8_t *))(base + NET_HANDLE_TO_CHR_RVA))(rec + 0x54);
+    if (map != 0xffffffff) {
+        void *id = ((void *(*)(const uint32_t *, uint32_t *))(base + MAP_ID_DECODE_RVA))(&map, &decoded);
+        loaded = ((uint8_t (*)(void *))(base + MAP_ID_LOADED_RVA))(id);
+    }
+    log_line(LOG_DEBUG,
+             "Probe 0x40 check valid=%d origin_ok=%d kind=%u r80=%08x chr80=%p h54=%08x:%08x chr54=%p map=%08x loaded=%d "
+             "map_man=%p",
+             (int)(uint8_t)r, (int)((uint8_t (*)(const uint8_t *))(base + RECORD_ORIGIN_VALID_RVA))(rec + 0x40),
+             rec[0x40], r80, chr80, *(const uint32_t *)(rec + 0x54), (uint32_t)h54b, chr54, map, loaded,
+             *(void **)(base + MAP_MAN_RVA));
+    return r;
 }
 
 // The player list FUN_140b5d2e0 sends as 0x61 (0x20-byte entries at [[this+0xa8]+0x70]: id, slot, player_id, number,
@@ -182,6 +281,22 @@ static void patch_send_helper(void)
                                                      "send helper prologue");
     broadcast_trampoline = (Broadcast_t)patch_prologue(BROADCAST_RVA, bcast, 16, (void *)hook_broadcast,
                                                        "broadcast prologue");
+    if (log_level >= LOG_DEBUG) {
+        static const uint8_t to_host[14] = {0x48, 0x83, 0xec, 0x38, 0x8b, 0xc2, 0x44,
+                                            0x89, 0x4c, 0x24, 0x20, 0x4d, 0x8b, 0xc8};
+        static const uint8_t poll[14] = {0x48, 0x89, 0x6c, 0x24, 0x18, 0x56, 0x41,
+                                         0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x40};
+        static const uint8_t x40[14] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x55, 0x56,
+                                        0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56};
+        static const uint8_t valid[17] = {0x48, 0x89, 0x5c, 0x24, 0x20, 0x57, 0x48, 0x83, 0xec,
+                                          0x20, 0x48, 0x8b, 0xd9, 0x48, 0x83, 0xe9, 0x80};
+        send_to_host_trampoline = (SendToHost_t)patch_prologue(SEND_TO_HOST_RVA, to_host, 14, (void *)hook_send_to_host,
+                                                               "send to host prologue");
+        msg_poll_trampoline = (MsgPoll_t)patch_prologue(MSG_POLL_RVA, poll, 14, (void *)hook_msg_poll, "message poll prologue");
+        x40_poll_trampoline = (X40Poll_t)patch_prologue(X40_POLL_RVA, x40, 14, (void *)hook_x40_poll, "0x40 poll prologue");
+        x40_record_valid_trampoline = (X40RecordValid_t)patch_prologue(X40_RECORD_VALID_RVA, valid, 17,
+                                                                       (void *)hook_x40_record_valid, "0x40 record prologue");
+    }
     // mov [rsp+8],rbx; push rsi; push rdi; push r14; sub rsp,0x30; mov r14,rdx
     static const uint8_t plist[16] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x56, 0x57, 0x41,
                                       0x56, 0x48, 0x83, 0xec, 0x30, 0x4c, 0x8b, 0xf2};

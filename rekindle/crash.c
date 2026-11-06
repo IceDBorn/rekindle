@@ -18,6 +18,27 @@ static void where(char *out, size_t cap, uintptr_t a)
     }
 }
 
+// The DLRegularHeap panic at +0x214e298 keeps the free's rbx (heap) and rdi (block - 0x10) on the stack, and its header
+// in rbp. Plausible size with bit 0 clear means a double free, garbage means an overwrite.
+static void log_heap_panic(const CONTEXT *c)
+{
+    HANDLE me = GetCurrentProcess();
+    uintptr_t block = 0, heap = 0, msg = 0, range[2] = {0};
+    char text[96] = "", hex[3 * 96 + 1] = "";
+    uint8_t mem[96];
+    SIZE_T got = 0;
+    ReadProcessMemory(me, (void *)(c->Rsp + 0x58), &block, sizeof block, NULL);
+    ReadProcessMemory(me, (void *)(c->Rsp + 0x60), &heap, sizeof heap, NULL);
+    ReadProcessMemory(me, (void *)(c->Rsp + 0x80), &msg, sizeof msg, NULL);
+    ReadProcessMemory(me, (void *)(heap + 8), range, sizeof range, NULL);
+    ReadProcessMemory(me, (void *)msg, text, sizeof text - 1, NULL);
+    ReadProcessMemory(me, (void *)(block - 0x20), mem, sizeof mem, &got);
+    for (SIZE_T i = 0; i < got; i++)
+        snprintf(hex + i * 3, 4, "%02x ", mem[i]);
+    log_line(LOG_ERROR, "Heap panic \"%s\" heap=%p range=%p-%p block=%p header=%llx from block-0x20: %s", text,
+             (void *)heap, (void *)range[0], (void *)range[1], (void *)block, (unsigned long long)c->Rbp, hex);
+}
+
 // Logs fatal-looking exceptions, since the game exits without a dialog. It runs before any handler, so a line can
 // also come from an exception the game handles and survives.
 LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep)
@@ -76,5 +97,7 @@ LONG CALLBACK crash_veh(EXCEPTION_POINTERS *ep)
     }
 #undef ADD
     log_line(LOG_ERROR, "%s", line);
+    if (ip - base == 0x214e298)
+        log_heap_panic(c);
     return EXCEPTION_CONTINUE_SEARCH;
 }
